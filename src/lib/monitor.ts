@@ -1,5 +1,6 @@
 import { Website, MonitorLog } from './types';
-import { updateWebsite, addMonitorLog } from './db';
+import { updateWebsite, addMonitorLog, getWebsiteById } from './db';
+import { sendAlertEmail } from './email';
 
 interface CheckResult {
   status: 'up' | 'down';
@@ -11,6 +12,7 @@ interface CheckResult {
 
 export async function checkWebsite(website: Website): Promise<CheckResult> {
   const startTime = Date.now();
+  const previousStatus = website.status;
   
   try {
     const controller = new AbortController();
@@ -69,6 +71,32 @@ export async function checkWebsite(website: Website): Promise<CheckResult> {
       checkedAt: new Date().toISOString(),
     });
 
+    // Send alerts on status change
+    if (previousStatus === 'up' && result.status === 'down') {
+      // Site went down
+      await sendAlertEmail(
+        website,
+        'down',
+        `Your website ${website.name} (${website.url}) is now DOWN. Error: ${result.error}`
+      );
+    } else if (previousStatus === 'down' && result.status === 'up') {
+      // Site recovered
+      await sendAlertEmail(
+        website,
+        'up',
+        `Your website ${website.name} (${website.url}) is back UP! Response time: ${result.responseTime}ms`
+      );
+    }
+
+    // SSL warning (if less than 14 days remaining)
+    if (result.sslDaysRemaining !== null && result.sslDaysRemaining < 14) {
+      await sendAlertEmail(
+        website,
+        'ssl',
+        `SSL certificate for ${website.name} expires in ${result.sslDaysRemaining} days.`
+      );
+    }
+
     return result;
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
@@ -88,6 +116,15 @@ export async function checkWebsite(website: Website): Promise<CheckResult> {
       checkedAt: new Date().toISOString(),
     });
 
+    // Send alert if site just went down
+    if (previousStatus === 'up') {
+      await sendAlertEmail(
+        website,
+        'down',
+        `Your website ${website.name} (${website.url}) is now DOWN. Error: ${errorMessage}`
+      );
+    }
+
     return {
       status: 'down',
       responseTime: null,
@@ -98,17 +135,28 @@ export async function checkWebsite(website: Website): Promise<CheckResult> {
   }
 }
 
-export async function checkAllWebsites(): Promise<void> {
+export async function checkAllWebsites(): Promise<{ checked: number; errors: number }> {
   const { getAllWebsites } = await import('./db');
   const websites = getAllWebsites();
+  
+  let checked = 0;
+  let errors = 0;
+  
+  console.log(`[SiteWatch] Starting check of ${websites.length} websites at ${new Date().toISOString()}`);
   
   for (const website of websites) {
     try {
       await checkWebsite(website);
-      // Small delay between checks
+      checked++;
+      // Small delay between checks to be nice to target servers
       await new Promise(resolve => setTimeout(resolve, 500));
     } catch (error) {
-      console.error(`Failed to check ${website.url}:`, error);
+      errors++;
+      console.error(`[SiteWatch] Failed to check ${website.url}:`, error);
     }
   }
+  
+  console.log(`[SiteWatch] Completed check: ${checked} checked, ${errors} errors`);
+  
+  return { checked, errors };
 }
