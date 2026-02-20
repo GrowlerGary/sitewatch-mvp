@@ -18,6 +18,16 @@ import {
 import TierBadge from '@/src/components/TierBadge';
 import { TierKey } from '@/src/lib/tiers';
 import { Website } from '@/src/lib/types';
+import { sanitizeInput } from '@/src/lib/sanitize';
+
+// Sanitize website data for display
+function sanitizeWebsite(site: Website): Website {
+  return {
+    ...site,
+    name: sanitizeInput(site.name),
+    lastError: site.lastError ? sanitizeInput(site.lastError) : null,
+  };
+}
 
 export default function SitesPage() {
   const router = useRouter();
@@ -46,7 +56,9 @@ export default function SitesPage() {
       
       if (response.ok) {
         const data = await response.json();
-        setWebsites(data.websites || []);
+        // Sanitize website data
+        const sanitizedWebsites = (data.websites || []).map(sanitizeWebsite);
+        setWebsites(sanitizedWebsites);
         setTier(data.tier || 'free');
       }
     } catch (error) {

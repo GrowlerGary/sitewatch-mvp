@@ -7,6 +7,7 @@ import { Website } from '@/src/lib/types';
 import { TIERS, TierKey } from '@/src/lib/tiers';
 import UpgradeModal from '@/src/components/UpgradeModal';
 import TierBadge from '@/src/components/TierBadge';
+import { sanitizeInput } from '@/src/lib/sanitize';
 import { 
   LayoutDashboard, 
   Globe, 
@@ -34,6 +35,15 @@ interface DashboardData {
     sitesLimit: number;
     smsUsed: number;
     smsLimit: number;
+  };
+}
+
+// Sanitize website data for display
+function sanitizeWebsite(site: Website): Website {
+  return {
+    ...site,
+    name: sanitizeInput(site.name),
+    lastError: site.lastError ? sanitizeInput(site.lastError) : null,
   };
 }
 
@@ -95,8 +105,11 @@ export default function Dashboard() {
       
       const result = await response.json();
       
+      // Sanitize website data
+      const sanitizedWebsites = (result.websites || []).map(sanitizeWebsite);
+      
       setData({
-        websites: result.websites || [],
+        websites: sanitizedWebsites,
         tier: result.tier || 'free',
         limit: result.limit || 3,
         count: result.count || 0,

@@ -1,9 +1,16 @@
 import { NextResponse } from 'next/server';
 import { deleteWebsite, getAllWebsites } from '@/src/lib/db';
+import { sanitizeInput } from '@/src/lib/sanitize';
+import { apiRateLimiter, getClientIP } from '@/src/lib/rate-limiter';
 
 // Helper to get user ID from request
 function getUserId(request: Request): string | null {
   return request.headers.get('X-User-Id') || request.headers.get('X-License-Key');
+}
+
+// Generic error message helper
+function getGenericErrorMessage(): string {
+  return 'An error occurred while processing your request';
 }
 
 export async function DELETE(
@@ -11,6 +18,17 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    // Rate limiting
+    const clientIP = getClientIP(request);
+    try {
+      await apiRateLimiter.consume(clientIP);
+    } catch {
+      return NextResponse.json(
+        { error: 'Too many requests. Please try again later.' },
+        { status: 429 }
+      );
+    }
+
     const { id } = await params;
     const userId = getUserId(request);
     
@@ -27,7 +45,7 @@ export async function DELETE(
   } catch (error) {
     console.error('Error deleting website:', error);
     return NextResponse.json(
-      { error: 'Failed to delete website' },
+      { error: getGenericErrorMessage() },
       { status: 500 }
     );
   }
@@ -38,6 +56,17 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    // Rate limiting
+    const clientIP = getClientIP(request);
+    try {
+      await apiRateLimiter.consume(clientIP);
+    } catch {
+      return NextResponse.json(
+        { error: 'Too many requests. Please try again later.' },
+        { status: 429 }
+      );
+    }
+
     const { id } = await params;
     const userId = getUserId(request);
     
@@ -51,11 +80,18 @@ export async function GET(
       );
     }
 
-    return NextResponse.json(website);
+    // Sanitize website data
+    const sanitizedWebsite = {
+      ...website,
+      name: sanitizeInput(website.name),
+      lastError: website.lastError ? sanitizeInput(website.lastError) : null,
+    };
+
+    return NextResponse.json(sanitizedWebsite);
   } catch (error) {
     console.error('Error fetching website:', error);
     return NextResponse.json(
-      { error: 'Failed to fetch website' },
+      { error: getGenericErrorMessage() },
       { status: 500 }
     );
   }

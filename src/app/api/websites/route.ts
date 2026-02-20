@@ -2,14 +2,32 @@ import { NextResponse } from 'next/server';
 import { getAllWebsites, addWebsite, canAddWebsite, deleteWebsite, getWebsiteById } from '@/src/lib/db';
 import { TIERS, TierKey } from '@/src/lib/tiers';
 import { getLicenseTier } from '../license/route';
+import { sanitizeInput, sanitizeUrl } from '@/src/lib/sanitize';
+import { apiRateLimiter, getClientIP } from '@/src/lib/rate-limiter';
 
 // Helper to get user ID from request
 function getUserId(request: Request): string | null {
   return request.headers.get('X-User-Id');
 }
 
+// Generic error message helper
+function getGenericErrorMessage(): string {
+  return 'An error occurred while processing your request';
+}
+
 export async function GET(request: Request) {
   try {
+    // Rate limiting
+    const clientIP = getClientIP(request);
+    try {
+      await apiRateLimiter.consume(clientIP);
+    } catch {
+      return NextResponse.json(
+        { error: 'Too many requests. Please try again later.' },
+        { status: 429 }
+      );
+    }
+
     const userId = getUserId(request);
     const licenseKey = request.headers.get('X-License-Key');
     
@@ -19,8 +37,16 @@ export async function GET(request: Request) {
     
     const websites = await getAllWebsites(effectiveKey);
     
+    // Sanitize website names for output
+    const sanitizedWebsites = websites.map(site => ({
+      ...site,
+      name: sanitizeInput(site.name),
+      url: sanitizeUrl(site.url) || site.url,
+      lastError: site.lastError ? sanitizeInput(site.lastError) : null,
+    }));
+    
     return NextResponse.json({
-      websites,
+      websites: sanitizedWebsites,
       tier,
       limit: TIERS[tier].limit,
       count: websites.length,
@@ -36,7 +62,7 @@ export async function GET(request: Request) {
   } catch (error) {
     console.error('Error fetching websites:', error);
     return NextResponse.json(
-      { error: 'Failed to fetch websites' },
+      { error: getGenericErrorMessage() },
       { status: 500 }
     );
   }
@@ -44,17 +70,39 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
+    // Rate limiting
+    const clientIP = getClientIP(request);
+    try {
+      await apiRateLimiter.consume(clientIP);
+    } catch {
+      return NextResponse.json(
+        { error: 'Too many requests. Please try again later.' },
+        { status: 429 }
+      );
+    }
+
     const userId = getUserId(request);
     const licenseKey = request.headers.get('X-License-Key');
     const effectiveKey = userId || licenseKey;
     const tier: TierKey = getLicenseTier(effectiveKey) || 'free';
     
     const body = await request.json();
-    const { url, name } = body;
+    let { url, name } = body;
 
     if (!url || !name) {
       return NextResponse.json(
         { error: 'URL and name are required' },
+        { status: 400 }
+      );
+    }
+
+    // Sanitize inputs
+    name = sanitizeInput(name).trim();
+    url = sanitizeUrl(url) || url.trim();
+
+    if (!name) {
+      return NextResponse.json(
+        { error: 'Invalid name provided' },
         { status: 400 }
       );
     }
@@ -105,7 +153,10 @@ export async function POST(request: Request) {
     }, effectiveKey);
 
     return NextResponse.json({
-      website,
+      website: {
+        ...website,
+        name: sanitizeInput(website.name),
+      },
       tier,
       count: current + 1,
       limit,
@@ -113,7 +164,7 @@ export async function POST(request: Request) {
   } catch (error) {
     console.error('Error adding website:', error);
     return NextResponse.json(
-      { error: 'Failed to add website' },
+      { error: getGenericErrorMessage() },
       { status: 500 }
     );
   }

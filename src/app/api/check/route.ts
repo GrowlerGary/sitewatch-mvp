@@ -1,8 +1,25 @@
 import { NextResponse } from 'next/server';
 import { checkAllWebsites } from '@/src/lib/monitor';
+import { apiRateLimiter, getClientIP } from '@/src/lib/rate-limiter';
+
+// Generic error message helper
+function getGenericErrorMessage(): string {
+  return 'An error occurred while processing your request';
+}
 
 export async function POST(request: Request) {
   try {
+    // Rate limiting
+    const clientIP = getClientIP(request);
+    try {
+      await apiRateLimiter.consume(clientIP);
+    } catch {
+      return NextResponse.json(
+        { error: 'Too many requests. Please try again later.' },
+        { status: 429 }
+      );
+    }
+
     // Verify cron secret to prevent unauthorized access
     const authHeader = request.headers.get('authorization');
     const expectedToken = process.env.CRON_SECRET;
@@ -35,7 +52,7 @@ export async function POST(request: Request) {
   } catch (error) {
     console.error('[SiteWatch] Error checking websites:', error);
     return NextResponse.json(
-      { error: 'Failed to check websites', details: error instanceof Error ? error.message : 'Unknown error' },
+      { error: getGenericErrorMessage() },
       { status: 500 }
     );
   }

@@ -1,6 +1,22 @@
 import { NextResponse } from 'next/server';
+import bcrypt from 'bcrypt';
 import { getUserByEmail, createUser, getUser, deleteWebsite, getAllWebsites } from '@/src/lib/db';
 import { TierKey } from '@/src/lib/tiers';
+import { authRateLimiter, getClientIP } from '@/src/lib/rate-limiter';
+
+const SALT_ROUNDS = 12;
+
+// Generic error message helper
+function getGenericErrorMessage(status: number): string {
+  switch (status) {
+    case 400: return 'Invalid request';
+    case 401: return 'Unauthorized';
+    case 403: return 'Forbidden';
+    case 404: return 'Not found';
+    case 429: return 'Too many requests';
+    default: return 'An error occurred';
+  }
+}
 
 export async function GET(request: Request) {
   try {
@@ -42,7 +58,7 @@ export async function GET(request: Request) {
   } catch (error) {
     console.error('Error fetching user:', error);
     return NextResponse.json(
-      { error: 'Failed to fetch user' },
+      { error: getGenericErrorMessage(500) },
       { status: 500 }
     );
   }
@@ -50,6 +66,17 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
+    // Rate limiting
+    const clientIP = getClientIP(request);
+    try {
+      await authRateLimiter.consume(clientIP);
+    } catch {
+      return NextResponse.json(
+        { error: 'Too many signup attempts. Please try again later.' },
+        { status: 429 }
+      );
+    }
+
     const body = await request.json();
     const { email, password } = body;
 
@@ -88,10 +115,12 @@ export async function POST(request: Request) {
       );
     }
     
-    // Create new user
+    // Create new user with bcrypt hashed password
+    const passwordHash = password ? await bcrypt.hash(password, SALT_ROUNDS) : null;
+    
     user = await createUser({
       email,
-      passwordHash: password ? await hashPassword(password) : null,
+      passwordHash,
       stripeCustomerId: null,
       plan: 'free',
       phoneNumber: null,
@@ -111,25 +140,26 @@ export async function POST(request: Request) {
   } catch (error) {
     console.error('Error creating user:', error);
     return NextResponse.json(
-      { error: 'Failed to create user' },
+      { error: getGenericErrorMessage(500) },
       { status: 500 }
     );
   }
 }
 
-// Simple password hashing for MVP (in production, use bcrypt or similar)
-async function hashPassword(password: string): Promise<string> {
-  // For MVP, we'll use a simple hash. In production, use bcrypt
-  const encoder = new TextEncoder();
-  const data = encoder.encode(password + 'sitewatch-salt');
-  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
-}
-
 // Login endpoint
 export async function PUT(request: Request) {
   try {
+    // Rate limiting
+    const clientIP = getClientIP(request);
+    try {
+      await authRateLimiter.consume(clientIP);
+    } catch {
+      return NextResponse.json(
+        { error: 'Too many login attempts. Please try again later.' },
+        { status: 429 }
+      );
+    }
+
     const body = await request.json();
     const { email, password } = body;
 
@@ -150,15 +180,16 @@ export async function PUT(request: Request) {
       );
     }
 
-    // Verify password
-    const hashedPassword = await hashPassword(password);
-    
+    // Verify password with bcrypt
     // For existing users without passwords (created before this update), allow login
-    if (user.passwordHash && user.passwordHash !== hashedPassword) {
-      return NextResponse.json(
-        { error: 'Invalid email or password' },
-        { status: 401 }
-      );
+    if (user.passwordHash) {
+      const isValidPassword = await bcrypt.compare(password, user.passwordHash);
+      if (!isValidPassword) {
+        return NextResponse.json(
+          { error: 'Invalid email or password' },
+          { status: 401 }
+        );
+      }
     }
 
     return NextResponse.json({
@@ -171,7 +202,7 @@ export async function PUT(request: Request) {
   } catch (error) {
     console.error('Error during login:', error);
     return NextResponse.json(
-      { error: 'Failed to sign in' },
+      { error: getGenericErrorMessage(500) },
       { status: 500 }
     );
   }
@@ -202,7 +233,7 @@ export async function DELETE(request: Request) {
   } catch (error) {
     console.error('Error deleting user:', error);
     return NextResponse.json(
-      { error: 'Failed to delete user' },
+      { error: getGenericErrorMessage(500) },
       { status: 500 }
     );
   }
