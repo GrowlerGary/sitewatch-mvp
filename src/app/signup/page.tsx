@@ -308,7 +308,7 @@ function SignupContent() {
           <div className="hidden lg:flex flex-col justify-center">
             <div className="bg-blue-600 rounded-2xl p-8 text-white">
               <h2 className="text-2xl font-bold mb-6">
-                Free forever for up to 3 websites
+                Free forever for 1 website
               </h2>
               
               <ul className="space-y-4">
