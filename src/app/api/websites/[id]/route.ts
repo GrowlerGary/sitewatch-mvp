@@ -1,15 +1,20 @@
 import { NextResponse } from 'next/server';
 import { deleteWebsite, getAllWebsites } from '@/src/lib/db';
 
+// Helper to get user ID from request
+function getUserId(request: Request): string | null {
+  return request.headers.get('X-User-Id') || request.headers.get('X-License-Key');
+}
+
 export async function DELETE(
   request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const { id } = await params;
-    const licenseKey = request.headers.get('X-License-Key');
+    const userId = getUserId(request);
     
-    const success = await deleteWebsite(id, licenseKey);
+    const success = await deleteWebsite(id, userId);
 
     if (!success) {
       return NextResponse.json(
@@ -34,9 +39,9 @@ export async function GET(
 ) {
   try {
     const { id } = await params;
-    const licenseKey = request.headers.get('X-License-Key');
+    const userId = getUserId(request);
     
-    const websites = await getAllWebsites(licenseKey);
+    const websites = await getAllWebsites(userId);
     const website = websites.find(w => w.id === id);
 
     if (!website) {

@@ -1,9 +1,9 @@
 import { createClient } from '@supabase/supabase-js';
 import { Website, MonitorLog, User, Subscription } from './types';
-import { TIERS, TierKey, FREE_TIER_LIMIT, PAID_TIER_LIMIT } from './tiers';
+import { TIERS, TierKey, FREE_TIER_LIMIT, PRO_TIER_LIMIT } from './tiers';
 
 // Re-export tier info
-export { TIERS, FREE_TIER_LIMIT, PAID_TIER_LIMIT };
+export { TIERS, FREE_TIER_LIMIT, PRO_TIER_LIMIT };
 export type { TierKey } from './tiers';
 
 const supabaseUrl = process.env.SUPABASE_URL || '';

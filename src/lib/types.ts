@@ -27,6 +27,7 @@ export interface MonitorLog {
 export interface User {
   id: string;
   email: string;
+  passwordHash?: string | null;
   stripeCustomerId: string | null;
   plan: 'free' | 'starter' | 'pro' | 'business';
   phoneNumber: string | null;

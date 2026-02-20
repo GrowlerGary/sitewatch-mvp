@@ -17,11 +17,16 @@ export async function POST(request: Request) {
 
     // Check if license-specific check requested
     const licenseKey = request.headers.get('X-License-Key');
+    
+    console.log(`[SiteWatch API] Starting check - License: ${licenseKey || 'all'}`);
+    
     const result = await checkAllWebsites(licenseKey);
+    
+    console.log(`[SiteWatch API] Check complete - ${result.checked} checked, ${result.errors} errors`);
     
     return NextResponse.json({ 
       success: true, 
-      message: 'All websites checked',
+      message: result.checked > 0 ? 'All websites checked' : 'No websites to check',
       checked: result.checked,
       errors: result.errors,
       licenseKey: licenseKey || 'all',
@@ -30,7 +35,7 @@ export async function POST(request: Request) {
   } catch (error) {
     console.error('[SiteWatch] Error checking websites:', error);
     return NextResponse.json(
-      { error: 'Failed to check websites' },
+      { error: 'Failed to check websites', details: error instanceof Error ? error.message : 'Unknown error' },
       { status: 500 }
     );
   }

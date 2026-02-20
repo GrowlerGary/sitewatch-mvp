@@ -170,6 +170,13 @@ export async function PUT(request: Request) {
   }
 }
 
+// In-memory user tier storage (for users who upgrade)
+const userTiers: Map<string, TierKey> = new Map();
+
+export function setUserTierById(userId: string, tier: TierKey) {
+  userTiers.set(userId, tier);
+}
+
 // Export for use in other routes
 export function isLicenseValid(licenseKey: string | null): { valid: boolean; tier: TierKey } {
   if (!licenseKey) return { valid: false, tier: 'free' };
@@ -182,6 +189,12 @@ export function isLicenseValid(licenseKey: string | null): { valid: boolean; tie
 
 export function getLicenseTier(licenseKey: string | null): TierKey {
   if (!licenseKey) return 'free';
+  
+  // First check if it's a user ID with an upgraded tier
+  const userTier = userTiers.get(licenseKey);
+  if (userTier) return userTier;
+  
+  // Then check license cache
   const cached = verifiedLicenses.get(licenseKey);
   return cached?.tier || 'free';
 }

@@ -1,14 +1,23 @@
 import { NextResponse } from 'next/server';
-import { getAllWebsites, addWebsite, canAddWebsite } from '@/src/lib/db';
+import { getAllWebsites, addWebsite, canAddWebsite, deleteWebsite, getWebsiteById } from '@/src/lib/db';
 import { TIERS, TierKey } from '@/src/lib/tiers';
 import { getLicenseTier } from '../license/route';
 
+// Helper to get user ID from request
+function getUserId(request: Request): string | null {
+  return request.headers.get('X-User-Id');
+}
+
 export async function GET(request: Request) {
   try {
+    const userId = getUserId(request);
     const licenseKey = request.headers.get('X-License-Key');
-    const tier: TierKey = getLicenseTier(licenseKey) || 'free';
     
-    const websites = await getAllWebsites(licenseKey);
+    // Use userId as license key if available, otherwise use license key header
+    const effectiveKey = userId || licenseKey;
+    const tier: TierKey = getLicenseTier(effectiveKey) || 'free';
+    
+    const websites = await getAllWebsites(effectiveKey);
     
     return NextResponse.json({
       websites,
@@ -17,6 +26,12 @@ export async function GET(request: Request) {
       count: websites.length,
       features: TIERS[tier].features,
       checkInterval: TIERS[tier].checkInterval,
+      usage: {
+        sitesUsed: websites.length,
+        sitesLimit: TIERS[tier].limit,
+        smsUsed: 0,
+        smsLimit: tier === 'free' ? 0 : tier === 'starter' ? 10 : tier === 'pro' ? 100 : 500,
+      },
     });
   } catch (error) {
     console.error('Error fetching websites:', error);
@@ -29,8 +44,10 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
+    const userId = getUserId(request);
     const licenseKey = request.headers.get('X-License-Key');
-    const tier: TierKey = getLicenseTier(licenseKey) || 'free';
+    const effectiveKey = userId || licenseKey;
+    const tier: TierKey = getLicenseTier(effectiveKey) || 'free';
     
     const body = await request.json();
     const { url, name } = body;
@@ -53,7 +70,7 @@ export async function POST(request: Request) {
     }
 
     // Check site limits
-    const { allowed, limit, current } = await canAddWebsite(licenseKey, tier);
+    const { allowed, limit, current } = await canAddWebsite(effectiveKey, tier);
     
     if (!allowed) {
       return NextResponse.json(
@@ -67,8 +84,9 @@ export async function POST(request: Request) {
           limit,
           upgradeRequired: tier === 'free',
           upgradeOptions: [
-            { tier: 'starter', price: 9, limit: 15 },
-            { tier: 'pro', price: 29, limit: 50 },
+            { tier: 'starter', price: 5, limit: 10 },
+            { tier: 'pro', price: 15, limit: 50 },
+            { tier: 'business', price: 49, limit: Infinity },
           ],
         },
         { status: 403 }
@@ -84,7 +102,7 @@ export async function POST(request: Request) {
       sslDaysRemaining: null,
       responseTime: null,
       lastError: null,
-    }, licenseKey);
+    }, effectiveKey);
 
     return NextResponse.json({
       website,

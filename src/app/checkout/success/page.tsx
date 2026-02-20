@@ -26,7 +26,7 @@ function CheckoutSuccessContent() {
       setMessage('Your subscription is active! Redirecting...');
       
       setTimeout(() => {
-        router.push('/');
+        router.push('/dashboard');
       }, 2000);
     }, 1500);
 
@@ -56,7 +56,7 @@ function CheckoutSuccessContent() {
             </h1>
             <p className="text-gray-600">{message}</p>
             <button
-              onClick={() => router.push('/')}
+              onClick={() => router.push('/dashboard')}
               className="mt-6 px-6 py-3 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition-colors"
             >
               Go to Dashboard
@@ -74,10 +74,10 @@ function CheckoutSuccessContent() {
             </h1>
             <p className="text-gray-600">{message}</p>
             <button
-              onClick={() => router.push('/pricing')}
+              onClick={() => router.push('/dashboard')}
               className="mt-6 px-6 py-3 bg-gray-900 text-white rounded-lg font-medium hover:bg-gray-800 transition-colors"
             >
-              Back to Pricing
+              Go to Dashboard
             </button>
           </div>
         )}

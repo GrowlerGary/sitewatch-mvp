@@ -148,16 +148,22 @@ export async function checkWebsite(website: Website): Promise<CheckResult> {
 export async function checkAllWebsites(licenseKey?: string | null): Promise<{ checked: number; errors: number }> {
   let websites: Website[] = [];
   
-  if (licenseKey !== undefined) {
+  if (licenseKey !== undefined && licenseKey !== null) {
     // Check websites for specific license
     websites = await getLicensedWebsites(licenseKey);
   } else {
-    // Check all registered websites
-    websites = Array.from(allWebsites.values());
-    
-    // Also check free tier websites
+    // Check ALL websites from all tiers - read directly from database
+    // Free tier (null license key)
     const freeWebsites = await getLicensedWebsites(null);
-    websites = [...websites, ...freeWebsites];
+    websites = [...freeWebsites];
+    
+    // Also check any registered websites in memory (for backward compatibility)
+    const registeredWebsites = Array.from(allWebsites.values());
+    for (const site of registeredWebsites) {
+      if (!websites.find(w => w.id === site.id)) {
+        websites.push(site);
+      }
+    }
   }
   
   // Remove duplicates
