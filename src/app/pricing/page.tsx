@@ -1,15 +1,34 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import PricingComponent from '@/src/components/PricingPage';
 import { TierKey } from '@/src/lib/tiers';
-import { useUser } from '@/src/context/UserContext';
 
 export default function PricingPage() {
   const router = useRouter();
-  const { tier, user } = useUser();
+  const [tier, setTier] = useState<TierKey>('free');
   const [isLoading, setIsLoading] = useState(false);
+
+  useEffect(() => {
+    // Load license from localStorage to determine tier
+    const licenseKey = localStorage.getItem('sitewatch_license_key');
+    if (licenseKey) {
+      // Validate license
+      fetch('/api/license', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ licenseKey }),
+      })
+        .then(res => res.json())
+        .then(data => {
+          if (data.valid && data.tier) {
+            setTier(data.tier);
+          }
+        })
+        .catch(console.error);
+    }
+  }, []);
 
   const handleSubscribe = async (selectedTier: TierKey) => {
     if (selectedTier === 'free') {
@@ -25,7 +44,6 @@ export default function PricingPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           tier: selectedTier,
-          email: user?.email,
           successUrl: `${window.location.origin}/checkout/success`,
           cancelUrl: `${window.location.origin}/pricing`,
         }),

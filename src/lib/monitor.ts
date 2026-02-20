@@ -12,15 +12,17 @@ interface CheckResult {
 
 // Store all websites from all licenses for monitoring
 let allWebsites: Map<string, Website> = new Map();
+let websiteLicenseMap: Map<string, string | null> = new Map(); // websiteId -> licenseKey
 
 export function registerWebsite(website: Website, licenseKey: string | null) {
-  allWebsites.set(website.id, { ...website, licenseKey: licenseKey || '' });
+  allWebsites.set(website.id, website);
+  websiteLicenseMap.set(website.id, licenseKey);
 }
 
 export async function checkWebsite(website: Website): Promise<CheckResult> {
   const startTime = Date.now();
   const previousStatus = website.status;
-  const licenseKey = (website as any).licenseKey || null;
+  const licenseKey = websiteLicenseMap.get(website.id) || null;
   
   try {
     const controller = new AbortController();

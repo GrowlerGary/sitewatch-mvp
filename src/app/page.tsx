@@ -349,7 +349,7 @@ export default function Dashboard() {
               </div>
               <div className="bg-white rounded-xl shadow-sm p-6 border">
                 <p className="text-sm text-gray-500">Check Interval</p>
-                <p className="text-2xl md:text-3xl font-bold">{tierConfig.checkIntervalMinutes}m</p>
+                <p className="text-2xl md:text-3xl font-bold">{tierConfig.checkInterval < 1 ? `${tierConfig.checkInterval * 60}s` : `${tierConfig.checkInterval}m`}</p>
               </div>
             </div>
 
@@ -477,15 +477,17 @@ export default function Dashboard() {
           {/* Sidebar */}
           <div className="lg:col-span-1">
             <UsageStats 
-              showUpgradeButton={data.tier !== 'business'} 
-              onUpgrade={() => setShowUpgradeModal(true)} 
+              showUpgradeButton={data.tier !== 'pro'} 
+              onUpgrade={() => setShowUpgradeModal(true)}
+              tier={data.tier}
+              sitesUsed={data.count}
             />
             
             {/* Quick Tips */}
             <div className="mt-6 bg-blue-50 rounded-lg p-4 border border-blue-100">
               <h4 className="font-medium text-blue-900 mb-2">💡 Quick Tips</h4>
               <ul className="text-sm text-blue-800 space-y-2">
-                <li>• Checks run every {tierConfig.checkIntervalMinutes} minutes</li>
+                <li>• Checks run every {tierConfig.checkInterval} minutes</li>
                 <li>• SSL certificates are monitored automatically</li>
                 <li>• You'll get alerts when sites go down</li>
                 {data.tier === 'free' && (

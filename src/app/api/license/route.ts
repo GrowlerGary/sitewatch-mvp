@@ -1,17 +1,30 @@
 import { NextResponse } from 'next/server';
 import Stripe from 'stripe';
+import { TierKey, TIERS } from '@/src/lib/tiers';
+import { setUserTier } from '@/src/lib/db';
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || '', {
-  apiVersion: '2025-02-24.acacia',
-});
+// Lazy initialize Stripe to avoid build-time errors
+let stripe: Stripe | null = null;
 
-// In-memory store for verified licenses (acts as a cache)
-// In production, this should be backed by a database
+function getStripe(): Stripe {
+  if (!stripe) {
+    const secretKey = process.env.STRIPE_SECRET_KEY;
+    if (!secretKey) {
+      throw new Error('STRIPE_SECRET_KEY not configured');
+    }
+    stripe = new Stripe(secretKey, {
+      apiVersion: '2025-02-24.acacia',
+    });
+  }
+  return stripe;
+}
+
+// In-memory store for verified licenses
 interface LicenseInfo {
   status: 'active' | 'canceled' | 'past_due';
   customerId: string;
   subscriptionId: string;
-  tier: 'starter' | 'pro';
+  tier: TierKey;
 }
 
 const verifiedLicenses: Map<string, LicenseInfo> = new Map();
@@ -37,7 +50,7 @@ export async function POST(request: Request) {
     }
 
     // Retrieve the checkout session
-    const session = await stripe.checkout.sessions.retrieve(sessionId, {
+    const session = await getStripe().checkout.sessions.retrieve(sessionId, {
       expand: ['subscription'],
     });
 
@@ -49,23 +62,27 @@ export async function POST(request: Request) {
     }
 
     const subscription = session.subscription as Stripe.Subscription;
-    const tier = (session.metadata?.tier || 'starter') as 'starter' | 'pro';
+    const tier = (session.metadata?.tier || subscription.metadata?.tier || 'starter') as TierKey;
     
     // Generate a license key
     const licenseKey = `sw_${tier}_${Buffer.from(session.customer as string).toString('base64url')}_${Date.now()}`;
     
-    verifiedLicenses.set(licenseKey, {
+    const licenseInfo: LicenseInfo = {
       status: subscription.status === 'active' || subscription.status === 'trialing' ? 'active' : subscription.status as any,
       customerId: session.customer as string,
       subscriptionId: subscription.id,
       tier,
-    });
+    };
+    
+    verifiedLicenses.set(licenseKey, licenseInfo);
+    setUserTier(licenseKey, tier);
 
     return NextResponse.json({
       licenseKey,
       tier,
       status: subscription.status,
       currentPeriodEnd: subscription.current_period_end,
+      features: TIERS[tier].features,
     });
   } catch (error: any) {
     console.error('License verification error:', error);
@@ -95,19 +112,20 @@ export async function PUT(request: Request) {
         valid: cached.status === 'active',
         status: cached.status,
         tier: cached.tier,
+        features: TIERS[cached.tier].features,
       });
     }
 
-    // If not in cache and Stripe is configured, verify with Stripe
-    if (licenseKey.startsWith('sw_') && process.env.STRIPE_SECRET_KEY) {
+    // If not in cache, verify with Stripe
+    if (licenseKey.startsWith('sw_')) {
       try {
         const parts = licenseKey.split('_');
         if (parts.length >= 3) {
-          const tier = parts[1] as 'starter' | 'pro';
+          const tier = parts[1] as TierKey;
           const customerId = Buffer.from(parts[2], 'base64url').toString();
           
           // List subscriptions for this customer
-          const subscriptions = await stripe.subscriptions.list({
+          const subscriptions = await getStripe().subscriptions.list({
             customer: customerId,
             status: 'active',
             limit: 1,
@@ -115,17 +133,21 @@ export async function PUT(request: Request) {
 
           if (subscriptions.data.length > 0) {
             const sub = subscriptions.data[0];
-            verifiedLicenses.set(licenseKey, {
+            const licenseInfo: LicenseInfo = {
               status: 'active',
               customerId,
               subscriptionId: sub.id,
               tier,
-            });
+            };
+            verifiedLicenses.set(licenseKey, licenseInfo);
+            setUserTier(licenseKey, tier);
+            
             return NextResponse.json({
               valid: true,
               status: 'active',
               tier,
               currentPeriodEnd: sub.current_period_end,
+              features: TIERS[tier].features,
             });
           }
         }
@@ -137,6 +159,7 @@ export async function PUT(request: Request) {
     return NextResponse.json({
       valid: false,
       status: 'unknown',
+      tier: 'free',
     });
   } catch (error: any) {
     console.error('License validation error:', error);
@@ -148,14 +171,17 @@ export async function PUT(request: Request) {
 }
 
 // Export for use in other routes
-export function isLicenseValid(licenseKey: string | null): boolean {
-  if (!licenseKey) return false;
+export function isLicenseValid(licenseKey: string | null): { valid: boolean; tier: TierKey } {
+  if (!licenseKey) return { valid: false, tier: 'free' };
   const cached = verifiedLicenses.get(licenseKey);
-  return cached?.status === 'active';
+  return { 
+    valid: cached?.status === 'active', 
+    tier: cached?.tier || 'free' 
+  };
 }
 
-export function getLicenseTier(licenseKey: string | null): 'starter' | 'pro' | null {
-  if (!licenseKey) return null;
+export function getLicenseTier(licenseKey: string | null): TierKey {
+  if (!licenseKey) return 'free';
   const cached = verifiedLicenses.get(licenseKey);
-  return cached?.tier || null;
+  return cached?.tier || 'free';
 }

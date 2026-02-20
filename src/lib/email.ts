@@ -31,8 +31,11 @@ function canSendSMS(user: User): boolean {
   const tier = TIERS[user.plan as keyof typeof TIERS];
   if (!tier) return false;
   
-  // Check if user has remaining SMS quota
-  return user.smsCountMonthly < tier.smsLimit;
+  // Free tier gets no SMS, paid tiers get effectively unlimited (generous limit)
+  if (user.plan === 'free') return false;
+  
+  // Check if user has remaining SMS quota (generous limit for paid tiers)
+  return user.smsCountMonthly < 1000;
 }
 
 export async function sendAlertEmail(
