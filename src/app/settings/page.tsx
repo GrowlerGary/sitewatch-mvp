@@ -37,6 +37,7 @@ export default function SettingsPage() {
   const [showUpgradeModal, setShowUpgradeModal] = useState(false);
   const [isCheckingOut, setIsCheckingOut] = useState(false);
   const [message, setMessage] = useState('');
+  const [siteCount, setSiteCount] = useState(0);
 
   useEffect(() => {
     const savedUserId = localStorage.getItem('sitewatch_user_id');
@@ -47,6 +48,7 @@ export default function SettingsPage() {
     
     setUserId(savedUserId);
     fetchUser(savedUserId);
+    fetchSiteCount(savedUserId);
   }, [router]);
 
   async function fetchUser(uid: string) {
@@ -60,6 +62,21 @@ export default function SettingsPage() {
       console.error('Failed to fetch user:', error);
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function fetchSiteCount(uid: string) {
+    try {
+      const response = await fetch('/api/websites', {
+        headers: { 'X-User-Id': uid }
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        setSiteCount(data.count || 0);
+      }
+    } catch (error) {
+      console.error('Failed to fetch site count:', error);
     }
   }
 
@@ -390,7 +407,7 @@ export default function SettingsPage() {
         isOpen={showUpgradeModal}
         onClose={() => setShowUpgradeModal(false)}
         currentTier={tier}
-        currentSites={0}
+        currentSites={siteCount}
         onUpgrade={handleUpgrade}
         isLoading={isCheckingOut}
       />
