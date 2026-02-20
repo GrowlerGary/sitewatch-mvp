@@ -1,184 +1,137 @@
-# SiteWatch - Client Website Health Monitor
+# SiteWatch - Website Monitoring with Freemium Model
 
-A simple dashboard for agencies to monitor client websites for uptime and SSL certificate status.
+A modern website monitoring SaaS with email + SMS alerts, SSL monitoring, and tiered pricing.
 
 ## Features
 
-- **Dashboard**: View all monitored websites with real-time status
-- **Add/Remove Sites**: Simple interface to manage client websites
-- **Automated Monitoring**: Checks website uptime every 5-10 minutes
-- **Email Alerts**: Get notified when sites go down or recover (via Resend)
-- **SSL Warnings**: Alerts when SSL certificates are expiring soon
-- **Clean UI**: Professional interface suitable for client presentations
-
-## Architecture: Single Cron Job + Vercel Free Tier
-
-**This solution uses cron-job.org (free external service) to monitor UNLIMITED websites on Vercel free tier.**
-
-### Why This Approach?
-
-| Criteria | Our Solution |
-|----------|-------------|
-| **Efficiency** | ✅ Single API call checks all sites (batched) |
-| **Cost** | ✅ Stays on Vercel free tier |
-| **Scheduling** | ✅ cron-job.org provides frequent checks (5-10 min) |
-| **Scalability** | ✅ Handles 5, 20, 100+ sites with same setup |
-| **Reliability** | ✅ External cron service + Vercel hosting |
-
-### How It Works
-
-```
-┌──────────────────┐     ┌─────────────────────┐     ┌──────────────┐
-│  Cron-Job.org    │────▶│  /api/check         │────▶│  Site 1      │
-│  (every 5-10 min)│     │  (single endpoint)  │────▶│  Site 2      │
-└──────────────────┘     └─────────────────────┘────▶│  Site 3...   │
-                                                     └──────────────┘
-```
-
-1. **cron-job.org** triggers `/api/check` every 5-10 minutes (free)
-2. **Single endpoint** loops through ALL websites in your list
-3. **No limit** on number of sites you can monitor
-4. **Fits Vercel free tier** - no Vercel cron jobs needed
-
-### Why Cron-Job.org?
-
-Vercel Hobby tier only allows **daily** cron jobs, which isn't frequent enough for monitoring. Cron-job.org provides:
-
-- ✅ Free tier with checks every minute
-- ✅ Easy web interface
-- ✅ Email notifications if jobs fail
-- ✅ No credit card required
+- **Free Tier**: 1 website, 10-minute checks, email alerts
+- **Starter ($5/mo)**: 3 websites, 5-minute checks, 10 SMS/month
+- **Pro ($15/mo)**: 10 websites, 1-minute checks, API access, 50 SMS/month
+- **Business ($49/mo)**: 50 websites, priority support, webhooks, 200 SMS/month
 
 ## Tech Stack
 
-- **Frontend**: Next.js 14 + React + TypeScript + Tailwind CSS
-- **Backend**: Next.js API Routes (serverless)
-- **Database**: In-memory (resets on deploy - add Redis/DB for persistence)
-- **Email**: Resend API
-- **Hosting**: Vercel (free tier)
-- **Scheduling**: Cron-Job.org (free external service)
+- Next.js 16 with App Router
+- TypeScript
+- Tailwind CSS
+- Supabase (PostgreSQL + Auth)
+- Stripe (Payments)
+- Twilio (SMS)
+- Resend (Email)
+- Cron-Job.org (Scheduled checks)
 
 ## Quick Start
 
+### 1. Clone and Install
+
 ```bash
+git clone https://github.com/GrowlerGary/sitewatch-mvp.git
+cd sitewatch-mvp
 npm install
+```
+
+### 2. Set Up Environment Variables
+
+Copy `.env.example` to `.env.local` and fill in your credentials:
+
+```bash
+cp .env.example .env.local
+```
+
+### 3. Set Up Supabase
+
+1. Create a free account at [supabase.com](https://supabase.com)
+2. Create a new project
+3. Run the schema SQL in `supabase/schema.sql`
+4. Copy your project URL and service key to `.env.local`
+
+### 4. Set Up Stripe
+
+1. Create a Stripe account at [stripe.com](https://stripe.com)
+2. Create three products with recurring pricing:
+   - Starter: $5/month
+   - Pro: $15/month  
+   - Business: $49/month
+3. Copy the price IDs to your `.env.local`
+4. Set up webhook endpoint pointing to `/api/stripe/webhook`
+
+### 5. Set Up Twilio (Optional, for SMS)
+
+1. Create a Twilio account at [twilio.com](https://twilio.com)
+2. Get a phone number for SMS
+3. Copy credentials to `.env.local`
+
+### 6. Run Development Server
+
+```bash
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000)
-
-## Environment Variables
-
-```env
-# Required for email alerts
-RESEND_API_KEY=your_resend_api_key
-ALERT_EMAIL=your@email.com
-
-# Optional: protect manual check triggers
-CRON_SECRET=random_secret_string
-```
+Visit `http://localhost:3000`
 
 ## Deployment
 
-### 1. Push to GitHub
+### Vercel (Recommended)
 
-```bash
-git init
-git add .
-git commit -m "Initial commit"
-git push origin main
-```
+1. Push to GitHub
+2. Import project in Vercel
+3. Add environment variables
+4. Deploy!
 
-### 2. Deploy to Vercel
+### Stripe Webhook Setup for Production
 
-1. Go to [vercel.com](https://vercel.com) and import your repo
-2. Add environment variables in Settings
-3. Deploy!
+In Stripe Dashboard, create a webhook endpoint:
+- URL: `https://your-domain.com/api/stripe/webhook`
+- Events to listen for:
+  - `checkout.session.completed`
+  - `invoice.payment_succeeded`
+  - `invoice.payment_failed`
+  - `customer.subscription.updated`
+  - `customer.subscription.deleted`
 
-### 3. Set Up Cron-Job.org
+## Database Schema
 
-1. **Sign up** at [cron-job.org](https://cron-job.org)
-2. **Create a new job**:
-   - **URL**: `https://your-domain.vercel.app/api/check`
-   - **Schedule**: Every 5 or 10 minutes
-   - **Method**: POST
-3. **Add Authentication** (if you set CRON_SECRET):
-   - Header: `Authorization: Bearer your_cron_secret`
-4. **Save and test** the job
+### Users Table
+- `id`: UUID primary key
+- `email`: User email
+- `stripe_customer_id`: Stripe customer reference
+- `plan`: free | starter | pro | business
+- `phone_number`: For SMS alerts
+- `sms_count_monthly`: Tracks SMS usage
+- `sms_count_reset_at`: When to reset counter
 
-See [DEPLOY.md](DEPLOY.md) for detailed instructions.
+### Subscriptions Table
+- `id`: UUID primary key
+- `user_id`: Reference to user
+- `stripe_subscription_id`: Stripe subscription reference
+- `status`: active | canceled | past_due | etc.
+- `current_period_end`: When subscription renews
+- `plan`: starter | pro | business
 
-## API Endpoints
+### Websites Table
+- `id`: UUID primary key
+- `user_id`: Reference to user
+- `url`, `name`, `status`
+- `last_checked`, `ssl_expiry_date`
+- `response_time`, `last_error`
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/websites` | GET | List all monitored websites |
-| `/api/websites` | POST | Add a new website |
-| `/api/websites/:id` | DELETE | Remove a website |
-| `/api/check` | POST | Trigger check for all websites (cron calls this) |
+### Monitor Logs Table
+- `id`: UUID primary key
+- `website_id`: Reference to website
+- `status`, `response_time`, `error`
+- `checked_at`: Timestamp
 
-### Manual Check Trigger
+## API Routes
 
-You can manually trigger a check:
+- `GET/POST /api/websites` - List/create websites
+- `GET/POST/PUT /api/user` - User management
+- `POST /api/stripe/checkout` - Create checkout session
+- `POST /api/stripe/webhook` - Handle Stripe events
+- `GET /api/check` - Trigger monitoring check
 
-```bash
-# Without auth (if CRON_SECRET not set)
-curl -X POST https://your-domain.com/api/check
+## Environment Variables
 
-# With auth
-curl -X POST https://your-domain.com/api/check \
-  -H "Authorization: Bearer your_cron_secret"
-```
-
-## How to Add Websites
-
-1. Open the dashboard
-2. Enter website name and URL
-3. Click "Add Website"
-4. The site will be checked on the next cron run (within 5-10 minutes)
-
-## Email Alerts
-
-You'll receive emails when:
-- A website goes **down** (was up, now down)
-- A website **recovers** (was down, now up)
-- SSL certificate expires in **less than 14 days**
-
-## Limitations
-
-1. **Data Persistence**: Uses in-memory storage (resets on deploy). For production, add Redis or a database.
-2. **Vercel Free Tier Limits**: 
-   - Function execution time: 10 seconds per check batch
-   - 100GB bandwidth/month
-3. **SSL Checks**: Currently simulated. For real SSL monitoring, integrate with SSL Labs API or similar.
-
-## Scaling
-
-This architecture scales to **100+ sites** on Vercel free tier:
-
-- One cron-job.org job handles all sites
-- Checks run sequentially with 500ms delays
-- 100 sites = ~50 seconds (within Vercel's limits)
-
-If you need more:
-- Upgrade to Vercel Pro for longer timeouts
-- Or split sites across multiple projects
-
-## Troubleshooting
-
-### Cron job not running?
-- Check Cron-Job.org dashboard for job status
-- Verify the URL is correct
-- Check if CRON_SECRET is set correctly
-
-### Emails not sending?
-- Verify `RESEND_API_KEY` and `ALERT_EMAIL` are set
-- Check Resend dashboard for delivery status
-- Check server logs in Vercel
-
-### Sites showing as down?
-- Some sites block non-browser requests
-- Consider adding custom headers in `monitor.ts`
+See `.env.example` for all required variables.
 
 ## License
 

@@ -15,13 +15,16 @@ export async function POST(request: Request) {
       );
     }
 
-    const result = await checkAllWebsites();
+    // Check if license-specific check requested
+    const licenseKey = request.headers.get('X-License-Key');
+    const result = await checkAllWebsites(licenseKey);
     
     return NextResponse.json({ 
       success: true, 
       message: 'All websites checked',
       checked: result.checked,
       errors: result.errors,
+      licenseKey: licenseKey || 'all',
       timestamp: new Date().toISOString()
     });
   } catch (error) {

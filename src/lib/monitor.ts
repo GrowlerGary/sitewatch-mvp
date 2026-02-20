@@ -1,5 +1,5 @@
 import { Website, MonitorLog } from './types';
-import { updateWebsite, addMonitorLog, getWebsiteById } from './db';
+import { updateWebsite, addMonitorLog, getAllWebsites as getLicensedWebsites } from './db';
 import { sendAlertEmail } from './email';
 
 interface CheckResult {
@@ -10,9 +10,17 @@ interface CheckResult {
   sslDaysRemaining: number | null;
 }
 
+// Store all websites from all licenses for monitoring
+let allWebsites: Map<string, Website> = new Map();
+
+export function registerWebsite(website: Website, licenseKey: string | null) {
+  allWebsites.set(website.id, { ...website, licenseKey: licenseKey || '' });
+}
+
 export async function checkWebsite(website: Website): Promise<CheckResult> {
   const startTime = Date.now();
   const previousStatus = website.status;
+  const licenseKey = (website as any).licenseKey || null;
   
   try {
     const controller = new AbortController();
@@ -59,7 +67,7 @@ export async function checkWebsite(website: Website): Promise<CheckResult> {
       sslExpiryDate: result.sslExpiryDate,
       sslDaysRemaining: result.sslDaysRemaining,
       lastError: result.error,
-    });
+    }, licenseKey);
 
     // Log the check
     await addMonitorLog({
@@ -105,7 +113,7 @@ export async function checkWebsite(website: Website): Promise<CheckResult> {
       status: 'down',
       lastChecked: new Date().toISOString(),
       lastError: errorMessage,
-    });
+    }, licenseKey);
 
     await addMonitorLog({
       websiteId: website.id,
@@ -135,16 +143,30 @@ export async function checkWebsite(website: Website): Promise<CheckResult> {
   }
 }
 
-export async function checkAllWebsites(): Promise<{ checked: number; errors: number }> {
-  const { getAllWebsites } = await import('./db');
-  const websites = getAllWebsites();
+export async function checkAllWebsites(licenseKey?: string | null): Promise<{ checked: number; errors: number }> {
+  let websites: Website[] = [];
+  
+  if (licenseKey !== undefined) {
+    // Check websites for specific license
+    websites = await getLicensedWebsites(licenseKey);
+  } else {
+    // Check all registered websites
+    websites = Array.from(allWebsites.values());
+    
+    // Also check free tier websites
+    const freeWebsites = await getLicensedWebsites(null);
+    websites = [...websites, ...freeWebsites];
+  }
+  
+  // Remove duplicates
+  const uniqueWebsites = Array.from(new Map(websites.map(w => [w.id, w])).values());
   
   let checked = 0;
   let errors = 0;
   
-  console.log(`[SiteWatch] Starting check of ${websites.length} websites at ${new Date().toISOString()}`);
+  console.log(`[SiteWatch] Starting check of ${uniqueWebsites.length} websites at ${new Date().toISOString()}`);
   
-  for (const website of websites) {
+  for (const website of uniqueWebsites) {
     try {
       await checkWebsite(website);
       checked++;
