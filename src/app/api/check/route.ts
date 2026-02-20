@@ -7,11 +7,8 @@ export async function POST(request: Request) {
     const authHeader = request.headers.get('authorization');
     const expectedToken = process.env.CRON_SECRET;
     
-    // Allow requests from Vercel Cron (no auth header) or with valid token
-    const isVercelCron = request.headers.get('x-vercel-signature') !== null ||
-                         request.headers.get('user-agent')?.includes('Vercel') === true;
-    
-    if (expectedToken && !isVercelCron && authHeader !== `Bearer ${expectedToken}`) {
+    // If CRON_SECRET is set, require valid token
+    if (expectedToken && authHeader !== `Bearer ${expectedToken}`) {
       return NextResponse.json(
         { error: 'Unauthorized' },
         { status: 401 }

@@ -49,19 +49,28 @@ git push -u origin main
    - `CRON_SECRET`
 5. Click Deploy
 
-### Step 6: Verify Cron Job
+### Step 6: Set Up Cron-Job.org
 
-After deployment:
+Since Vercel Hobby tier only allows daily cron jobs, we use **cron-job.org** (free) for more frequent checks:
 
-1. Go to Vercel Dashboard → Your Project → Cron Jobs
-2. You should see: `*/5 * * * *` → `/api/check`
-3. Status should be "Active"
+1. **Sign up** at [cron-job.org](https://cron-job.org)
+2. **Create a new job**:
+   - **Title**: SiteWatch Monitor
+   - **URL**: `https://your-domain.vercel.app/api/check`
+   - **Schedule**: Every 5 or 10 minutes
+   - **Method**: POST
+3. **Add Authentication** (if you set CRON_SECRET):
+   - Header: `Authorization`
+   - Value: `Bearer your_cron_secret`
+4. **Save and test** the job
+
+Your SiteWatch instance will now be checked every 5-10 minutes!
 
 ### Step 7: Test Monitoring
 
 1. Open your deployed dashboard
 2. Add 3+ websites
-3. Wait 5 minutes OR manually trigger:
+3. Wait for the next cron-job.org run OR manually trigger:
    ```bash
    curl -X POST https://your-domain.vercel.app/api/check \
      -H "Authorization: Bearer your_cron_secret"
@@ -70,16 +79,14 @@ After deployment:
 
 ## Architecture Explained
 
-### Why Single Cron Job?
+### Why Cron-Job.org?
 
-Vercel free tier = 2 cron jobs max.
+Vercel free tier = daily cron jobs only (not frequent enough for monitoring)
 
-**Old approach (bad):** One cron per site = limited to 2 sites ❌
-
-**Our approach (good):** One cron checks ALL sites = unlimited sites ✅
+**Our approach**: Use cron-job.org (free external service) to trigger checks every 5-10 minutes
 
 ```
-Vercel Cron (1 job)
+Cron-Job.org (free service)
     │
     ▼
 /api/check ──▶ Check Site 1
@@ -91,9 +98,16 @@ Vercel Cron (1 job)
     └──▶ Check Site 4, 5, 6...
 ```
 
+### Benefits
+
+- ✅ **Free** - No cost for cron-job.org basic tier
+- ✅ **Unlimited sites** - One job checks all your websites
+- ✅ **Frequent checks** - Every 5-10 minutes, not daily
+- ✅ **Reliable** - External service independent of Vercel
+
 ### Monitoring Flow
 
-1. Every 5 minutes, Vercel triggers `/api/check`
+1. Every 5-10 minutes, cron-job.org triggers `/api/check`
 2. Server loops through all websites in memory
 3. Each site is checked with a 500ms delay
 4. Status updates are saved in memory
@@ -103,7 +117,7 @@ Vercel Cron (1 job)
 
 | Resource | Limit | Our Usage |
 |----------|-------|-----------|
-| Cron jobs | 2 | 1 ✅ |
+| Vercel cron jobs | 1/day | Not used ✅ |
 | Function duration | 10s | ~1s per 2 sites ✅ |
 | Bandwidth | 100GB/mo | Minimal ✅ |
 | Build time | 6000 min/mo | ~2 min per deploy ✅ |
@@ -130,7 +144,7 @@ Vercel Cron (1 job)
 - ❌ Exceeds free tier limits
 - Options:
   1. Vercel Pro ($20/mo)
-  2. Use external cron service (cron-job.org)
+  2. Use multiple cron-job.org jobs with different site groups
   3. Split into multiple free projects
 
 ## Adding Persistence
@@ -155,8 +169,8 @@ Use Vercel Postgres or Supabase for persistent storage.
 
 **Check:**
 1. Vercel Logs (Dashboard → Functions)
-2. Is `vercel.json` committed to repo?
-3. Environment variables set correctly?
+2. Environment variables set correctly?
+3. Is CRON_SECRET set correctly in both Vercel and cron-job.org?
 
 ### Issue: Sites always show "Unknown"
 
@@ -195,3 +209,4 @@ After deployment:
 
 - Resend: [resend.com](https://resend.com) for email issues
 - Vercel: [vercel.com/help](https://vercel.com/help) for hosting issues
+- Cron-Job.org: [cron-job.org](https://cron-job.org) for scheduling issues

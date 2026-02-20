@@ -6,45 +6,48 @@ A simple dashboard for agencies to monitor client websites for uptime and SSL ce
 
 - **Dashboard**: View all monitored websites with real-time status
 - **Add/Remove Sites**: Simple interface to manage client websites
-- **Automated Monitoring**: Checks website uptime every 5 minutes
+- **Automated Monitoring**: Checks website uptime every 5-10 minutes
 - **Email Alerts**: Get notified when sites go down or recover (via Resend)
 - **SSL Warnings**: Alerts when SSL certificates are expiring soon
 - **Clean UI**: Professional interface suitable for client presentations
 
-## Architecture: Single Cron Job (Option A)
+## Architecture: Single Cron Job + Vercel Free Tier
 
-**This solution uses ONE Vercel Cron job to monitor UNLIMITED websites.**
+**This solution uses cron-job.org (free external service) to monitor UNLIMITED websites on Vercel free tier.**
 
 ### Why This Approach?
 
 | Criteria | Our Solution |
 |----------|-------------|
 | **Efficiency** | ✅ Single API call checks all sites (batched) |
-| **Cost** | ✅ Stays on Vercel free tier (only 1 cron job used) |
-| **Scalability** | ✅ Handles 5, 20, 100+ sites with same cron job |
-| **Reliability** | ✅ Vercel's managed infrastructure |
-| **Setup** | ✅ Zero config - just deploy |
+| **Cost** | ✅ Stays on Vercel free tier |
+| **Scheduling** | ✅ cron-job.org provides frequent checks (5-10 min) |
+| **Scalability** | ✅ Handles 5, 20, 100+ sites with same setup |
+| **Reliability** | ✅ External cron service + Vercel hosting |
 
 ### How It Works
 
 ```
-┌─────────────────┐     ┌─────────────────────┐     ┌──────────────┐
-│  Vercel Cron    │────▶│  /api/check         │────▶│  Site 1      │
-│  (every 5 min)  │     │  (single endpoint)  │────▶│  Site 2      │
-└─────────────────┘     └─────────────────────┘────▶│  Site 3...   │
-                                                    └──────────────┘
+┌──────────────────┐     ┌─────────────────────┐     ┌──────────────┐
+│  Cron-Job.org    │────▶│  /api/check         │────▶│  Site 1      │
+│  (every 5-10 min)│     │  (single endpoint)  │────▶│  Site 2      │
+└──────────────────┘     └─────────────────────┘────▶│  Site 3...   │
+                                                     └──────────────┘
 ```
 
-1. **One cron job** triggers `/api/check` every 5 minutes
+1. **cron-job.org** triggers `/api/check` every 5-10 minutes (free)
 2. **Single endpoint** loops through ALL websites in your list
 3. **No limit** on number of sites you can monitor
-4. **Fits free tier** - only uses 1 of your 2 available cron jobs
+4. **Fits Vercel free tier** - no Vercel cron jobs needed
 
-### Why Not Other Options?
+### Why Cron-Job.org?
 
-- **Option B (cron-job.org)**: External dependency, more complex
-- **Option C (GitHub Actions)**: Requires public repo, separate setup
-- **Option D (Client polling)**: Only works when dashboard is open
+Vercel Hobby tier only allows **daily** cron jobs, which isn't frequent enough for monitoring. Cron-job.org provides:
+
+- ✅ Free tier with checks every minute
+- ✅ Easy web interface
+- ✅ Email notifications if jobs fail
+- ✅ No credit card required
 
 ## Tech Stack
 
@@ -53,7 +56,7 @@ A simple dashboard for agencies to monitor client websites for uptime and SSL ce
 - **Database**: In-memory (resets on deploy - add Redis/DB for persistence)
 - **Email**: Resend API
 - **Hosting**: Vercel (free tier)
-- **Monitoring**: Vercel Cron (1 job, every 5 minutes)
+- **Scheduling**: Cron-Job.org (free external service)
 
 ## Quick Start
 
@@ -92,22 +95,18 @@ git push origin main
 2. Add environment variables in Settings
 3. Deploy!
 
-### 3. Verify Cron Job
+### 3. Set Up Cron-Job.org
 
-The `vercel.json` file automatically configures the cron job:
+1. **Sign up** at [cron-job.org](https://cron-job.org)
+2. **Create a new job**:
+   - **URL**: `https://your-domain.vercel.app/api/check`
+   - **Schedule**: Every 5 or 10 minutes
+   - **Method**: POST
+3. **Add Authentication** (if you set CRON_SECRET):
+   - Header: `Authorization: Bearer your_cron_secret`
+4. **Save and test** the job
 
-```json
-{
-  "crons": [
-    {
-      "path": "/api/check",
-      "schedule": "*/5 * * * *"
-    }
-  ]
-}
-```
-
-After deployment, verify in Vercel Dashboard → Cron Jobs.
+See [DEPLOY.md](DEPLOY.md) for detailed instructions.
 
 ## API Endpoints
 
@@ -136,7 +135,7 @@ curl -X POST https://your-domain.com/api/check \
 1. Open the dashboard
 2. Enter website name and URL
 3. Click "Add Website"
-4. The site will be checked on the next cron run (within 5 minutes)
+4. The site will be checked on the next cron run (within 5-10 minutes)
 
 ## Email Alerts
 
@@ -149,7 +148,6 @@ You'll receive emails when:
 
 1. **Data Persistence**: Uses in-memory storage (resets on deploy). For production, add Redis or a database.
 2. **Vercel Free Tier Limits**: 
-   - 2 cron jobs max (we use 1 ✅)
    - Function execution time: 10 seconds per check batch
    - 100GB bandwidth/month
 3. **SSL Checks**: Currently simulated. For real SSL monitoring, integrate with SSL Labs API or similar.
@@ -158,7 +156,7 @@ You'll receive emails when:
 
 This architecture scales to **100+ sites** on Vercel free tier:
 
-- One cron job handles all sites
+- One cron-job.org job handles all sites
 - Checks run sequentially with 500ms delays
 - 100 sites = ~50 seconds (within Vercel's limits)
 
@@ -169,9 +167,9 @@ If you need more:
 ## Troubleshooting
 
 ### Cron job not running?
-- Check Vercel Dashboard → Cron Jobs
-- Verify `vercel.json` is committed
-- Redeploy after adding `vercel.json`
+- Check Cron-Job.org dashboard for job status
+- Verify the URL is correct
+- Check if CRON_SECRET is set correctly
 
 ### Emails not sending?
 - Verify `RESEND_API_KEY` and `ALERT_EMAIL` are set
