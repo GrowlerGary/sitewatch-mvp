@@ -4,6 +4,20 @@ import { createHash, createHmac, timingSafeEqual } from 'crypto';
 import { getUserById } from '@/src/lib/db';
 import { TierKey, TIERS } from '@/src/lib/tiers';
 import { RateLimiterMemory } from 'rate-limiter-flexible';
+import { 
+  generateApiKey as dbGenerateApiKey, 
+  hashApiKey as dbHashApiKey, 
+  generateWebhookSecret as dbGenerateWebhookSecret,
+  getApiKeyByHash,
+  updateLastUsed,
+  signWebhookPayload,
+  verifyWebhookSignature,
+  getUserApiInfo as dbGetUserApiInfo,
+  storeApiKey as dbStoreApiKey,
+  revokeApiKey as dbRevokeApiKey,
+  storeWebhookConfig as dbStoreWebhookConfig,
+  getWebhookConfig as dbGetWebhookConfig,
+} from '@/src/lib/api-keys';
 
 // Rate limiter for API keys: 100 requests per hour per API key
 const apiKeyRateLimiter = new RateLimiterMemory({
@@ -12,47 +26,10 @@ const apiKeyRateLimiter = new RateLimiterMemory({
   duration: 60 * 60, // 1 hour
 });
 
-// API Key format: sw_live_<random>
-export function generateApiKey(): string {
-  const random = Array.from({ length: 32 }, () => 
-    Math.floor(Math.random() * 36).toString(36)
-  ).join('');
-  return `sw_live_${random}`;
-}
-
-// Hash API key for storage
-export function hashApiKey(apiKey: string): string {
-  return createHash('sha256').update(apiKey).digest('hex');
-}
-
-// Generate a webhook secret for signature verification
-export function generateWebhookSecret(): string {
-  return Array.from({ length: 32 }, () => 
-    Math.floor(Math.random() * 36).toString(36)
-  ).join('');
-}
-
-// Sign webhook payload with HMAC-SHA256
-export function signWebhookPayload(payload: string, secret: string): string {
-  return createHmac('sha256', secret).update(payload).digest('hex');
-}
-
-// Verify webhook signature using timing-safe comparison
-export function verifyWebhookSignature(
-  payload: string, 
-  signature: string, 
-  secret: string
-): boolean {
-  const expected = signWebhookPayload(payload, secret);
-  const expectedBuf = Buffer.from(expected, 'hex');
-  const signatureBuf = Buffer.from(signature, 'hex');
-  
-  if (expectedBuf.length !== signatureBuf.length) {
-    return false;
-  }
-  
-  return timingSafeEqual(expectedBuf, signatureBuf);
-}
+// Re-export functions from api-keys for convenience
+export const generateApiKey = dbGenerateApiKey;
+export const hashApiKey = dbHashApiKey;
+export const generateWebhookSecret = dbGenerateWebhookSecret;
 
 // Interface for authenticated API request
 export interface AuthenticatedRequest extends NextRequest {
@@ -65,16 +42,6 @@ export interface AuthenticatedRequest extends NextRequest {
     plan: TierKey;
   };
 }
-
-// In-memory API key store (userId -> { apiKeyHash, plan, etc })
-const apiKeyStore = new Map<string, {
-  id: string;
-  email: string;
-  plan: TierKey;
-  apiKeyHash: string;
-  webhookUrl?: string;
-  webhookSecret?: string;
-}>();
 
 // Extract API key from X-API-Key header
 export function extractApiKey(request: Request): string | null {
@@ -91,112 +58,77 @@ export async function validateApiKey(
   }
   
   // Hash the provided key
-  const keyHash = hashApiKey(apiKey);
+  const keyHash = dbHashApiKey(apiKey);
   
-  // Look up the key in our in-memory store
-  for (const user of apiKeyStore.values()) {
-    if (user.apiKeyHash === keyHash) {
-      // Check if tier allows API access (Pro+ only)
-      if (user.plan === 'free' || user.plan === 'starter') {
-        return { 
-          valid: false, 
-          error: 'API access requires Pro or Business tier' 
-        };
-      }
-      
-      return {
-        valid: true,
-        userId: user.id,
-        tier: user.plan,
-      };
-    }
+  // Look up the key in the database
+  const keyRecord = await getApiKeyByHash(keyHash);
+  
+  if (!keyRecord) {
+    return { valid: false, error: 'Invalid API key' };
   }
   
-  return { valid: false, error: 'Invalid API key' };
+  // Get user info to check tier
+  const user = await getUserById(keyRecord.user_id);
+  if (!user) {
+    return { valid: false, error: 'User not found' };
+  }
+  
+  // Check if tier allows API access (Pro+ only)
+  if (user.plan === 'free' || user.plan === 'starter') {
+    return { 
+      valid: false, 
+      error: 'API access requires Pro or Business tier' 
+    };
+  }
+  
+  // Update last used timestamp (fire and forget)
+  updateLastUsed(keyHash).catch(console.error);
+  
+  return {
+    valid: true,
+    userId: keyRecord.user_id,
+    tier: user.plan as TierKey,
+  };
 }
 
-// Store API key for a user
+// Store API key for a user (re-export with DB backing)
 export async function storeApiKey(
   userId: string, 
   apiKeyHash: string
 ): Promise<void> {
-  const user = await getUserById(userId);
-  if (!user) throw new Error('User not found');
-  
-  apiKeyStore.set(userId, {
-    id: userId,
-    email: user.email,
-    plan: user.plan as TierKey,
-    apiKeyHash,
-  });
+  return dbStoreApiKey(userId, apiKeyHash);
 }
 
-// Get user's API key info
+// Get user's API key info (re-export with DB backing)
 export async function getUserApiInfo(userId: string): Promise<{
   hasApiKey: boolean;
   apiKeyHash?: string;
   webhookUrl?: string | null;
   webhookSecret?: string | null;
 } | null> {
-  const user = apiKeyStore.get(userId);
-  if (!user) return null;
-  
-  return {
-    hasApiKey: !!user.apiKeyHash,
-    apiKeyHash: user.apiKeyHash,
-    webhookUrl: user.webhookUrl || null,
-    webhookSecret: user.webhookSecret || null,
-  };
+  return dbGetUserApiInfo(userId);
 }
 
-// Revoke API key
+// Revoke API key (re-export with DB backing)
 export async function revokeApiKey(userId: string): Promise<void> {
-  const user = apiKeyStore.get(userId);
-  if (user) {
-    user.apiKeyHash = '';
-    apiKeyStore.set(userId, user);
-  }
+  return dbRevokeApiKey(userId);
 }
 
-// Store webhook configuration
+// Store webhook configuration (re-export with DB backing)
 export async function storeWebhookConfig(
   userId: string, 
   webhookUrl: string,
   webhookSecret: string
 ): Promise<void> {
-  const user = apiKeyStore.get(userId);
-  if (user) {
-    user.webhookUrl = webhookUrl;
-    user.webhookSecret = webhookSecret;
-    apiKeyStore.set(userId, user);
-  } else {
-    // Create entry if it doesn't exist
-    const dbUser = await getUserById(userId);
-    if (!dbUser) throw new Error('User not found');
-    
-    apiKeyStore.set(userId, {
-      id: userId,
-      email: dbUser.email,
-      plan: dbUser.plan as TierKey,
-      apiKeyHash: '',
-      webhookUrl,
-      webhookSecret,
-    });
-  }
+  return dbStoreWebhookConfig(userId, webhookUrl, webhookSecret);
 }
 
-// Get webhook configuration for a user
+// Get webhook configuration for a user (re-export with DB backing)
 export async function getWebhookConfig(userId: string): Promise<{
   url?: string;
   secret?: string;
 } | null> {
-  const user = apiKeyStore.get(userId);
-  if (!user || !user.webhookUrl) return null;
-  
-  return {
-    url: user.webhookUrl,
-    secret: user.webhookSecret,
-  };
+  return dbGetWebhookConfig(userId);
 }
 
 // Middleware to validate API key and check tier
@@ -340,13 +272,13 @@ export async function sendWebhookEvent(
   },
   data: WebhookPayload['data']
 ): Promise<{ success: boolean; error?: string }> {
-  const config = await getWebhookConfig(userId);
+  const config = await dbGetWebhookConfig(userId);
   if (!config?.url || !config?.secret) {
     return { success: false, error: 'No webhook configured' };
   }
   
   // Check if user has Business tier
-  const user = apiKeyStore.get(userId);
+  const user = await getUserById(userId);
   if (!user || user.plan !== 'business') {
     return { success: false, error: 'Webhooks require Business tier' };
   }
