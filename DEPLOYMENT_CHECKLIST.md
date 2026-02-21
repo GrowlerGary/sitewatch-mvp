@@ -23,6 +23,9 @@
 - [ ] `STRIPE_PUBLISHABLE_KEY` - pk_live_... (or pk_test_... for testing)
 - [ ] `STRIPE_SECRET_KEY` - sk_live_... (or sk_test_... for testing)
 - [ ] `STRIPE_WEBHOOK_SECRET` - From Stripe CLI or dashboard
+- [ ] `STRIPE_STARTER_PRICE_ID` - price_... for Starter tier ($5/mo)
+- [ ] `STRIPE_PRO_PRICE_ID` - price_... for Pro tier ($15/mo)
+- [ ] `STRIPE_BUSINESS_PRICE_ID` - price_... for Business tier ($49/mo)
 
 ### SMS (Twilio)
 - [ ] `TWILIO_ACCOUNT_SID` - AC_...
@@ -63,11 +66,14 @@
 
 ### 1. Create Products & Prices
 - [ ] Go to Stripe Dashboard → Products
-- [ ] Create 4 products:
-  - **Free** - $0/month
-  - **Starter** - $5/month  
-  - **Pro** - $15/month
-  - **Business** - $49/month
+- [ ] Create 3 products with prices:
+  - **Starter** - $5/month → Copy Price ID (starts with `price_`)
+  - **Pro** - $15/month → Copy Price ID (starts with `price_`)
+  - **Business** - $49/month → Copy Price ID (starts with `price_`)
+- [ ] Add Price IDs to Vercel environment variables:
+  - `STRIPE_STARTER_PRICE_ID`
+  - `STRIPE_PRO_PRICE_ID`
+  - `STRIPE_BUSINESS_PRICE_ID`
 
 ### 2. Get API Keys
 - [ ] Developer → API Keys
