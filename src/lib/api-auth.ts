@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { createHash, createHmac, timingSafeEqual } from 'crypto';
-import { getUserById } from '@/src/lib/db';
+import { getUserById, supabase, isSupabaseConfigured } from '@/src/lib/db';
 import { TierKey, TIERS } from '@/src/lib/tiers';
 import { RateLimiterMemory } from 'rate-limiter-flexible';
 import { 
@@ -48,6 +48,46 @@ export function extractApiKey(request: Request): string | null {
   return request.headers.get('X-API-Key');
 }
 
+// Get user's effective tier from database
+async function getUserEffectiveTier(userId: string): Promise<TierKey> {
+  if (isSupabaseConfigured() && supabase) {
+    // Check for active subscription first
+    const { data: subscription } = await supabase
+      .from('subscriptions')
+      .select('status, plan')
+      .eq('user_id', userId)
+      .in('status', ['active', 'trialing'])
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .single();
+
+    if (subscription) {
+      return subscription.plan as TierKey;
+    }
+
+    // Fall back to user's plan field
+    const { data: user } = await supabase
+      .from('users')
+      .select('plan')
+      .eq('id', userId)
+      .single();
+
+    return (user?.plan as TierKey) || 'free';
+  } else {
+    // In-memory fallback
+    const { getUser, getSubscriptionByUserId } = await import('@/src/lib/db');
+    const user = await getUser(userId);
+    if (!user) return 'free';
+
+    const subscription = await getSubscriptionByUserId(userId);
+    if (subscription && ['active', 'trialing'].includes(subscription.status)) {
+      return subscription.plan;
+    }
+
+    return (user.plan as TierKey) || 'free';
+  }
+}
+
 // Validate API key and return user info
 export async function validateApiKey(
   apiKey: string
@@ -67,14 +107,11 @@ export async function validateApiKey(
     return { valid: false, error: 'Invalid API key' };
   }
   
-  // Get user info to check tier
-  const user = await getUserById(keyRecord.user_id);
-  if (!user) {
-    return { valid: false, error: 'User not found' };
-  }
+  // Get user's effective tier (checks subscription first)
+  const tier = await getUserEffectiveTier(keyRecord.user_id);
   
   // Check if tier allows API access (Pro+ only)
-  if (user.plan === 'free' || user.plan === 'starter') {
+  if (tier === 'free' || tier === 'starter') {
     return { 
       valid: false, 
       error: 'API access requires Pro or Business tier' 
@@ -87,7 +124,7 @@ export async function validateApiKey(
   return {
     valid: true,
     userId: keyRecord.user_id,
-    tier: user.plan as TierKey,
+    tier,
   };
 }
 
@@ -278,8 +315,8 @@ export async function sendWebhookEvent(
   }
   
   // Check if user has Business tier
-  const user = await getUserById(userId);
-  if (!user || user.plan !== 'business') {
+  const tier = await getUserEffectiveTier(userId);
+  if (tier !== 'business') {
     return { success: false, error: 'Webhooks require Business tier' };
   }
   

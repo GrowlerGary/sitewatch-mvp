@@ -9,21 +9,23 @@ export default function PricingPage() {
   const router = useRouter();
   const [tier, setTier] = useState<TierKey>('free');
   const [isLoading, setIsLoading] = useState(false);
+  const [userId, setUserId] = useState<string | null>(null);
 
   useEffect(() => {
-    // Load license from localStorage to determine tier
-    const licenseKey = localStorage.getItem('sitewatch_license_key');
-    if (licenseKey) {
-      // Validate license
-      fetch('/api/license', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ licenseKey }),
-      })
+    // Load user from localStorage
+    const storedUserId = localStorage.getItem('sitewatch_user_id');
+    if (storedUserId) {
+      setUserId(storedUserId);
+      // Fetch user data to get current tier
+      fetch(`/api/user?id=${storedUserId}`)
         .then(res => res.json())
         .then(data => {
-          if (data.valid && data.tier) {
-            setTier(data.tier);
+          if (data.user?.plan) {
+            setTier(data.user.plan);
+          }
+          // Check for active subscription
+          if (data.subscription?.status === 'active' || data.subscription?.status === 'trialing') {
+            setTier(data.subscription.plan);
           }
         })
         .catch(console.error);
@@ -32,7 +34,13 @@ export default function PricingPage() {
 
   const handleSubscribe = async (selectedTier: TierKey) => {
     if (selectedTier === 'free') {
-      router.push('/');
+      router.push('/signup');
+      return;
+    }
+
+    // Redirect to login if not authenticated
+    if (!userId) {
+      router.push(`/login?redirect=/pricing`);
       return;
     }
 
@@ -44,6 +52,7 @@ export default function PricingPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           tier: selectedTier,
+          userId,
           successUrl: `${window.location.origin}/checkout/success`,
           cancelUrl: `${window.location.origin}/pricing`,
         }),

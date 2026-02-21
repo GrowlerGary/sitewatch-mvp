@@ -1,13 +1,86 @@
 import { NextResponse } from 'next/server';
-import { getAllWebsites, addWebsite, canAddWebsite, deleteWebsite, getWebsiteById } from '@/src/lib/db';
 import { TIERS, TierKey } from '@/src/lib/tiers';
-import { getLicenseTier } from '../license/route';
+import { supabase, isSupabaseConfigured } from '@/src/lib/db';
 import { sanitizeInput, sanitizeUrl } from '@/src/lib/sanitize';
 import { apiRateLimiter, getClientIP } from '@/src/lib/rate-limiter';
 
 // Helper to get user ID from request
 function getUserId(request: Request): string | null {
   return request.headers.get('X-User-Id');
+}
+
+// Get user's effective tier from database
+async function getUserTier(userId: string): Promise<TierKey> {
+  if (!userId) return 'free';
+
+  if (isSupabaseConfigured() && supabase) {
+    // Fetch user and subscription from Supabase
+    const { data: user } = await supabase
+      .from('users')
+      .select('plan')
+      .eq('id', userId)
+      .single();
+
+    if (!user) return 'free';
+
+    // Check for active subscription
+    const { data: subscription } = await supabase
+      .from('subscriptions')
+      .select('status, plan')
+      .eq('user_id', userId)
+      .in('status', ['active', 'trialing'])
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .single();
+
+    if (subscription && ['active', 'trialing'].includes(subscription.status)) {
+      return subscription.plan as TierKey;
+    }
+
+    return (user.plan as TierKey) || 'free';
+  } else {
+    // In-memory fallback
+    const { getUser, getSubscriptionByUserId } = await import('@/src/lib/db');
+    const user = await getUser(userId);
+    if (!user) return 'free';
+
+    const subscription = await getSubscriptionByUserId(userId);
+    if (subscription && ['active', 'trialing'].includes(subscription.status)) {
+      return subscription.plan;
+    }
+
+    return (user.plan as TierKey) || 'free';
+  }
+}
+
+// Get website count for user
+async function getWebsiteCount(userId: string): Promise<number> {
+  if (isSupabaseConfigured() && supabase) {
+    const { count } = await supabase
+      .from('websites')
+      .select('*', { count: 'exact', head: true })
+      .eq('user_id', userId);
+    return count || 0;
+  } else {
+    const { getAllWebsites } = await import('@/src/lib/db');
+    const websites = await getAllWebsites(userId);
+    return websites.length;
+  }
+}
+
+// Get all websites for user
+async function getUserWebsites(userId: string) {
+  if (isSupabaseConfigured() && supabase) {
+    const { data } = await supabase
+      .from('websites')
+      .select('*')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false });
+    return data || [];
+  } else {
+    const { getAllWebsites } = await import('@/src/lib/db');
+    return await getAllWebsites(userId);
+  }
 }
 
 // Generic error message helper
@@ -29,34 +102,38 @@ export async function GET(request: Request) {
     }
 
     const userId = getUserId(request);
-    const licenseKey = request.headers.get('X-License-Key');
     
-    // Use userId as license key if available, otherwise use license key header
-    const effectiveKey = userId || licenseKey;
-    const tier: TierKey = getLicenseTier(effectiveKey) || 'free';
-    
-    const websites = await getAllWebsites(effectiveKey);
+    if (!userId) {
+      return NextResponse.json(
+        { error: 'Authentication required' },
+        { status: 401 }
+      );
+    }
+
+    const tier = await getUserTier(userId);
+    const websites = await getUserWebsites(userId);
+    const count = websites.length;
     
     // Sanitize website names for output
     const sanitizedWebsites = websites.map(site => ({
       ...site,
       name: sanitizeInput(site.name),
       url: sanitizeUrl(site.url) || site.url,
-      lastError: site.lastError ? sanitizeInput(site.lastError) : null,
+      lastError: site.last_error ? sanitizeInput(site.last_error) : null,
     }));
     
     return NextResponse.json({
       websites: sanitizedWebsites,
       tier,
       limit: TIERS[tier].limit,
-      count: websites.length,
+      count,
       features: TIERS[tier].features,
       checkInterval: TIERS[tier].checkInterval,
       usage: {
-        sitesUsed: websites.length,
+        sitesUsed: count,
         sitesLimit: TIERS[tier].limit,
         smsUsed: 0,
-        smsLimit: tier === 'free' ? 0 : tier === 'starter' ? 10 : tier === 'pro' ? 100 : 500,
+        smsLimit: TIERS[tier].smsLimit,
       },
     });
   } catch (error) {
@@ -82,9 +159,17 @@ export async function POST(request: Request) {
     }
 
     const userId = getUserId(request);
-    const licenseKey = request.headers.get('X-License-Key');
-    const effectiveKey = userId || licenseKey;
-    const tier: TierKey = getLicenseTier(effectiveKey) || 'free';
+    
+    if (!userId) {
+      return NextResponse.json(
+        { error: 'Authentication required' },
+        { status: 401 }
+      );
+    }
+
+    const tier = await getUserTier(userId);
+    const currentCount = await getWebsiteCount(userId);
+    const limit = TIERS[tier].limit;
     
     const body = await request.json();
     let { url, name } = body;
@@ -118,9 +203,7 @@ export async function POST(request: Request) {
     }
 
     // Check site limits
-    const { allowed, limit, current } = await canAddWebsite(effectiveKey, tier);
-    
-    if (!allowed) {
+    if (currentCount >= limit) {
       return NextResponse.json(
         { 
           error: 'Site limit reached',
@@ -128,29 +211,63 @@ export async function POST(request: Request) {
             ? `Free tier limited to ${limit} websites. Upgrade to add more.`
             : `You've reached the maximum of ${limit} websites.`,
           tier,
-          current,
+          current: currentCount,
           limit,
           upgradeRequired: tier === 'free',
           upgradeOptions: [
-            { tier: 'starter', price: 5, limit: 10 },
-            { tier: 'pro', price: 15, limit: 50 },
-            { tier: 'business', price: 49, limit: Infinity },
+            { tier: 'starter', price: 5, limit: 3 },
+            { tier: 'pro', price: 15, limit: 10 },
+            { tier: 'business', price: 49, limit: 50 },
           ],
         },
         { status: 403 }
       );
     }
 
-    const website = await addWebsite({
-      url,
-      name,
-      status: 'unknown',
-      lastChecked: null,
-      sslExpiryDate: null,
-      sslDaysRemaining: null,
-      responseTime: null,
-      lastError: null,
-    }, effectiveKey);
+    let website;
+    
+    if (isSupabaseConfigured() && supabase) {
+      // Insert into Supabase
+      const { data, error } = await supabase
+        .from('websites')
+        .insert({
+          user_id: userId,
+          url,
+          name,
+          status: 'unknown',
+          last_checked: null,
+          ssl_expiry_date: null,
+          ssl_days_remaining: null,
+          response_time: null,
+          last_error: null,
+          created_at: new Date().toISOString(),
+        })
+        .select()
+        .single();
+
+      if (error) {
+        console.error('Error creating website:', error);
+        return NextResponse.json(
+          { error: 'Failed to create website' },
+          { status: 500 }
+        );
+      }
+
+      website = data;
+    } else {
+      // In-memory fallback
+      const { addWebsite } = await import('@/src/lib/db');
+      website = await addWebsite({
+        url,
+        name,
+        status: 'unknown',
+        lastChecked: null,
+        sslExpiryDate: null,
+        sslDaysRemaining: null,
+        responseTime: null,
+        lastError: null,
+      }, userId);
+    }
 
     return NextResponse.json({
       website: {
@@ -158,7 +275,7 @@ export async function POST(request: Request) {
         name: sanitizeInput(website.name),
       },
       tier,
-      count: current + 1,
+      count: currentCount + 1,
       limit,
     }, { status: 201 });
   } catch (error) {

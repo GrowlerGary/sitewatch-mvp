@@ -8,8 +8,48 @@ import {
   generateWebhookSecret,
   storeWebhookConfig,
 } from '@/src/lib/api-auth';
-import { getUserById } from '@/src/lib/db';
+import { supabase, isSupabaseConfigured } from '@/src/lib/db';
 import { TIERS, TierKey } from '@/src/lib/tiers';
+
+// Helper to get user's effective tier
+async function getUserEffectiveTier(userId: string): Promise<TierKey> {
+  if (isSupabaseConfigured() && supabase) {
+    // Check for active subscription first
+    const { data: subscription } = await supabase
+      .from('subscriptions')
+      .select('status, plan')
+      .eq('user_id', userId)
+      .in('status', ['active', 'trialing'])
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .single();
+
+    if (subscription) {
+      return subscription.plan as TierKey;
+    }
+
+    // Fall back to user's plan field
+    const { data: user } = await supabase
+      .from('users')
+      .select('plan')
+      .eq('id', userId)
+      .single();
+
+    return (user?.plan as TierKey) || 'free';
+  } else {
+    // In-memory fallback
+    const { getUser, getSubscriptionByUserId } = await import('@/src/lib/db');
+    const user = await getUser(userId);
+    if (!user) return 'free';
+
+    const subscription = await getSubscriptionByUserId(userId);
+    if (subscription && ['active', 'trialing'].includes(subscription.status)) {
+      return subscription.plan;
+    }
+
+    return (user.plan as TierKey) || 'free';
+  }
+}
 
 // GET /api/api-keys - Get user's API key status
 export async function GET(request: Request) {
@@ -24,15 +64,7 @@ export async function GET(request: Request) {
       );
     }
     
-    const user = await getUserById(userId);
-    if (!user) {
-      return NextResponse.json(
-        { error: 'User not found' },
-        { status: 404 }
-      );
-    }
-    
-    const tier = user.plan as TierKey;
+    const tier = await getUserEffectiveTier(userId);
     const hasApiAccess = tier === 'pro' || tier === 'business';
     const hasWebhookAccess = tier === 'business';
     
@@ -76,15 +108,7 @@ export async function POST(request: Request) {
       );
     }
     
-    const user = await getUserById(userId);
-    if (!user) {
-      return NextResponse.json(
-        { error: 'User not found' },
-        { status: 404 }
-      );
-    }
-    
-    const tier = user.plan as TierKey;
+    const tier = await getUserEffectiveTier(userId);
     
     // Only Pro+ can generate API keys
     if (tier !== 'pro' && tier !== 'business') {
@@ -156,15 +180,7 @@ export async function PATCH(request: Request) {
       );
     }
     
-    const user = await getUserById(userId);
-    if (!user) {
-      return NextResponse.json(
-        { error: 'User not found' },
-        { status: 404 }
-      );
-    }
-    
-    const tier = user.plan as TierKey;
+    const tier = await getUserEffectiveTier(userId);
     
     // Only Business tier can configure webhooks
     if (tier !== 'business') {

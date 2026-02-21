@@ -4,8 +4,8 @@ import { sanitizeInput } from '@/src/lib/sanitize';
 import { apiRateLimiter, getClientIP } from '@/src/lib/rate-limiter';
 
 // Helper to get user ID from request
-function getUserId(request: Request): string | null {
-  return request.headers.get('X-User-Id') || request.headers.get('X-License-Key');
+function getUserId(request: Request): string {
+  return request.headers.get('X-User-Id') || request.headers.get('X-License-Key') || 'anonymous';
 }
 
 // Generic error message helper

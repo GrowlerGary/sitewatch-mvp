@@ -12,6 +12,7 @@ function CheckoutSuccessContent() {
 
   useEffect(() => {
     const sessionId = searchParams.get('session_id');
+    const userId = localStorage.getItem('sitewatch_user_id');
 
     if (!sessionId) {
       setStatus('error');
@@ -19,18 +20,47 @@ function CheckoutSuccessContent() {
       return;
     }
 
-    // The subscription was already created by the webhook
-    // We just need to wait a moment and then redirect
-    const timer = setTimeout(() => {
-      setStatus('success');
-      setMessage('Your subscription is active! Redirecting...');
-      
-      setTimeout(() => {
-        router.push('/dashboard');
-      }, 2000);
-    }, 1500);
+    // Refresh user data to get updated subscription status
+    const activateSubscription = async () => {
+      try {
+        // Wait a moment for the webhook to process
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        
+        if (userId) {
+          // Refresh user data from server
+          const response = await fetch(`/api/user?id=${userId}`);
+          if (response.ok) {
+            const data = await response.json();
+            
+            // Check if user has an active subscription
+            if (data.subscription && ['active', 'trialing'].includes(data.subscription.status)) {
+              setStatus('success');
+              setMessage(`Your ${data.subscription.plan} subscription is now active! Redirecting...`);
+              
+              setTimeout(() => {
+                router.push('/dashboard');
+              }, 2000);
+              return;
+            }
+          }
+        }
+        
+        // If we get here, the subscription might still be processing
+        // Show success anyway and let the user continue
+        setStatus('success');
+        setMessage('Your subscription is being processed. Redirecting...');
+        
+        setTimeout(() => {
+          router.push('/dashboard');
+        }, 2000);
+      } catch (error) {
+        console.error('Error activating subscription:', error);
+        setStatus('error');
+        setMessage('Something went wrong. Please contact support if your subscription is not active.');
+      }
+    };
 
-    return () => clearTimeout(timer);
+    activateSubscription();
   }, [searchParams, router]);
 
   return (
@@ -39,9 +69,7 @@ function CheckoutSuccessContent() {
         {status === 'loading' && (
           <div className="flex flex-col items-center">
             <Loader2 className="w-16 h-16 text-blue-600 animate-spin mb-4" />
-            <h1 className="text-2xl font-bold text-gray-900 mb-2">
-              Processing...
-            </h1>
+            <h1 className="text-2xl font-bold text-gray-900 mb-2">Processing...</h1>
             <p className="text-gray-600">{message}</p>
           </div>
         )}
@@ -51,9 +79,7 @@ function CheckoutSuccessContent() {
             <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mb-4">
               <CheckCircle className="w-10 h-10 text-green-600" />
             </div>
-            <h1 className="text-2xl font-bold text-gray-900 mb-2">
-              Welcome to SiteWatch!
-            </h1>
+            <h1 className="text-2xl font-bold text-gray-900 mb-2">Welcome to SiteWatch!</h1>
             <p className="text-gray-600">{message}</p>
             <button
               onClick={() => router.push('/dashboard')}
@@ -69,9 +95,7 @@ function CheckoutSuccessContent() {
             <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mb-4">
               <span className="text-4xl">⚠️</span>
             </div>
-            <h1 className="text-2xl font-bold text-gray-900 mb-2">
-              Something went wrong
-            </h1>
+            <h1 className="text-2xl font-bold text-gray-900 mb-2">Something went wrong</h1>
             <p className="text-gray-600">{message}</p>
             <button
               onClick={() => router.push('/dashboard')}

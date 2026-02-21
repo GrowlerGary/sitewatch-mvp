@@ -70,7 +70,7 @@ export async function checkWebsite(website: Website): Promise<CheckResult> {
       sslExpiryDate: result.sslExpiryDate,
       sslDaysRemaining: result.sslDaysRemaining,
       lastError: result.error,
-    }, licenseKey);
+    }, licenseKey || website.userId || 'default');
 
     // Log the check
     await addMonitorLog({
@@ -129,7 +129,7 @@ export async function checkWebsite(website: Website): Promise<CheckResult> {
       status: 'down',
       lastChecked: new Date().toISOString(),
       lastError: errorMessage,
-    }, licenseKey);
+    }, licenseKey || website.userId || 'default');
 
     await addMonitorLog({
       websiteId: website.id,
@@ -173,7 +173,7 @@ export async function checkAllWebsites(licenseKey?: string | null): Promise<{ ch
   } else {
     // Check ALL websites from all tiers - read directly from database
     // Free tier (null license key)
-    const freeWebsites = await getLicensedWebsites(null);
+    const freeWebsites = await getLicensedWebsites('free');
     websites = [...freeWebsites];
     
     // Also check any registered websites in memory (for backward compatibility)

@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import bcrypt from 'bcrypt';
-import { getUserByEmail, createUser, getUser, deleteWebsite, getAllWebsites } from '@/src/lib/db';
+import { supabase, isSupabaseConfigured } from '@/src/lib/db';
 import { TierKey } from '@/src/lib/tiers';
 import { authRateLimiter, getClientIP } from '@/src/lib/rate-limiter';
 
@@ -32,11 +32,52 @@ export async function GET(request: Request) {
     }
 
     let user = null;
-    
-    if (id) {
-      user = await getUser(id);
-    } else if (email) {
-      user = await getUserByEmail(email);
+    let subscription = null;
+
+    if (isSupabaseConfigured() && supabase) {
+      // Fetch from Supabase
+      let query = supabase.from('users').select('*');
+      
+      if (id) {
+        query = query.eq('id', id);
+      } else if (email) {
+        query = query.eq('email', email);
+      }
+
+      const { data: userData, error: userError } = await query.single();
+
+      if (userError || !userData) {
+        return NextResponse.json(
+          { error: 'User not found' },
+          { status: 404 }
+        );
+      }
+
+      user = userData;
+
+      // Fetch subscription
+      const { data: subData } = await supabase
+        .from('subscriptions')
+        .select('*')
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .single();
+
+      subscription = subData || null;
+    } else {
+      // In-memory fallback
+      const { getUser, getUserByEmail, getSubscriptionByUserId } = await import('@/src/lib/db');
+      
+      if (id) {
+        user = await getUser(id);
+      } else if (email) {
+        user = await getUserByEmail(email);
+      }
+
+      if (user) {
+        subscription = await getSubscriptionByUserId(user.id);
+      }
     }
 
     if (!user) {
@@ -46,14 +87,24 @@ export async function GET(request: Request) {
       );
     }
 
-    // Get user's websites count
-    const websites = await getAllWebsites(user.id);
-
     return NextResponse.json({
       user: {
-        ...user,
-        siteCount: websites.length,
+        id: user.id,
+        email: user.email,
+        plan: user.plan,
+        phoneNumber: user.phone_number || user.phoneNumber,
+        stripeCustomerId: user.stripe_customer_id || user.stripeCustomerId,
+        smsCountMonthly: user.sms_count_monthly || user.smsCountMonthly || 0,
+        smsCountResetAt: user.sms_count_reset_at || user.smsCountResetAt,
+        createdAt: user.created_at || user.createdAt,
       },
+      subscription: subscription ? {
+        id: subscription.id,
+        status: subscription.status,
+        plan: subscription.plan,
+        currentPeriodEnd: subscription.current_period_end || subscription.currentPeriodEnd,
+        cancelAtPeriodEnd: subscription.cancel_at_period_end || subscription.cancelAtPeriodEnd,
+      } : null,
     });
   } catch (error) {
     console.error('Error fetching user:', error);
@@ -105,38 +156,91 @@ export async function POST(request: Request) {
       }
     }
 
-    // Check if user exists
-    let user = await getUserByEmail(email);
-    
-    if (user) {
-      return NextResponse.json(
-        { error: 'An account with this email already exists. Please log in.' },
-        { status: 409 }
-      );
-    }
-    
-    // Create new user with bcrypt hashed password
     const passwordHash = password ? await bcrypt.hash(password, SALT_ROUNDS) : null;
-    
-    user = await createUser({
-      email,
-      passwordHash,
-      stripeCustomerId: null,
-      plan: 'free',
-      phoneNumber: null,
-      smsCountMonthly: 0,
-      smsCountResetAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    });
 
-    return NextResponse.json({
-      user: {
-        id: user.id,
-        email: user.email,
-        plan: user.plan,
-        isNew: true,
-      },
-    }, { status: 201 });
+    if (isSupabaseConfigured() && supabase) {
+      // Check if user exists
+      const { data: existingUser } = await supabase
+        .from('users')
+        .select('id')
+        .eq('email', email)
+        .single();
+
+      if (existingUser) {
+        return NextResponse.json(
+          { error: 'An account with this email already exists. Please log in.' },
+          { status: 409 }
+        );
+      }
+
+      // Create user in Supabase
+      const { data: newUser, error: createError } = await supabase
+        .from('users')
+        .insert({
+          email,
+          password_hash: passwordHash,
+          plan: 'free',
+          stripe_customer_id: null,
+          phone_number: null,
+          sms_count_monthly: 0,
+          sms_count_reset_at: new Date().toISOString(),
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        })
+        .select()
+        .single();
+
+      if (createError) {
+        console.error('Error creating user:', createError);
+        return NextResponse.json(
+          { error: 'Failed to create user' },
+          { status: 500 }
+        );
+      }
+
+      return NextResponse.json({
+        user: {
+          id: newUser.id,
+          email: newUser.email,
+          plan: newUser.plan,
+          isNew: true,
+        },
+        subscription: null,
+      }, { status: 201 });
+    } else {
+      // In-memory fallback
+      const { getUserByEmail, createUser } = await import('@/src/lib/db');
+      
+      let user = await getUserByEmail(email);
+      
+      if (user) {
+        return NextResponse.json(
+          { error: 'An account with this email already exists. Please log in.' },
+          { status: 409 }
+        );
+      }
+
+      user = await createUser({
+        email,
+        passwordHash,
+        stripeCustomerId: null,
+        plan: 'free',
+        phoneNumber: null,
+        smsCountMonthly: 0,
+        smsCountResetAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      });
+
+      return NextResponse.json({
+        user: {
+          id: user.id,
+          email: user.email,
+          plan: user.plan,
+          isNew: true,
+        },
+        subscription: null,
+      }, { status: 201 });
+    }
   } catch (error) {
     console.error('Error creating user:', error);
     return NextResponse.json(
@@ -170,34 +274,87 @@ export async function PUT(request: Request) {
       );
     }
 
-    // Find user by email
-    const user = await getUserByEmail(email);
-    
-    if (!user) {
-      return NextResponse.json(
-        { error: 'Invalid email or password' },
-        { status: 401 }
-      );
-    }
+    let user = null;
+    let subscription = null;
 
-    // Verify password with bcrypt
-    // For existing users without passwords (created before this update), allow login
-    if (user.passwordHash) {
-      const isValidPassword = await bcrypt.compare(password, user.passwordHash);
-      if (!isValidPassword) {
+    if (isSupabaseConfigured() && supabase) {
+      // Fetch user from Supabase
+      const { data: userData, error: userError } = await supabase
+        .from('users')
+        .select('*')
+        .eq('email', email)
+        .single();
+
+      if (userError || !userData) {
         return NextResponse.json(
           { error: 'Invalid email or password' },
           { status: 401 }
         );
       }
+
+      user = userData;
+
+      // Verify password
+      if (user.password_hash) {
+        const isValidPassword = await bcrypt.compare(password, user.password_hash);
+        if (!isValidPassword) {
+          return NextResponse.json(
+            { error: 'Invalid email or password' },
+            { status: 401 }
+          );
+        }
+      }
+
+      // Fetch subscription
+      const { data: subData } = await supabase
+        .from('subscriptions')
+        .select('*')
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .single();
+
+      subscription = subData || null;
+    } else {
+      // In-memory fallback
+      const { getUserByEmail, getSubscriptionByUserId } = await import('@/src/lib/db');
+      
+      user = await getUserByEmail(email);
+      
+      if (!user) {
+        return NextResponse.json(
+          { error: 'Invalid email or password' },
+          { status: 401 }
+        );
+      }
+
+      // Verify password
+      if (user.passwordHash) {
+        const isValidPassword = await bcrypt.compare(password, user.passwordHash);
+        if (!isValidPassword) {
+          return NextResponse.json(
+            { error: 'Invalid email or password' },
+            { status: 401 }
+          );
+        }
+      }
+
+      subscription = await getSubscriptionByUserId(user.id);
     }
 
     return NextResponse.json({
       user: {
         id: user.id,
         email: user.email,
-        plan: user.plan,
+        plan: user.plan || 'free',
       },
+      subscription: subscription ? {
+        id: subscription.id,
+        status: subscription.status,
+        plan: subscription.plan,
+        currentPeriodEnd: subscription.current_period_end || subscription.currentPeriodEnd,
+        cancelAtPeriodEnd: subscription.cancel_at_period_end || subscription.cancelAtPeriodEnd,
+      } : null,
     });
   } catch (error) {
     console.error('Error during login:', error);
@@ -220,14 +377,31 @@ export async function DELETE(request: Request) {
       );
     }
 
-    // Get all user's websites and delete them
-    const websites = await getAllWebsites(id);
-    for (const website of websites) {
-      await deleteWebsite(website.id, id);
+    if (isSupabaseConfigured() && supabase) {
+      // Delete user's subscriptions first
+      await supabase.from('subscriptions').delete().eq('user_id', id);
+      
+      // Delete user's websites
+      await supabase.from('websites').delete().eq('user_id', id);
+      
+      // Delete user
+      const { error } = await supabase.from('users').delete().eq('id', id);
+      
+      if (error) {
+        console.error('Error deleting user:', error);
+        return NextResponse.json(
+          { error: 'Failed to delete account' },
+          { status: 500 }
+        );
+      }
+    } else {
+      // In-memory fallback
+      const { deleteWebsite, getAllWebsites } = await import('@/src/lib/db');
+      const websites = await getAllWebsites(id);
+      for (const website of websites) {
+        await deleteWebsite(website.id, id);
+      }
     }
-
-    // Note: In a real app, you'd also delete the user from the database
-    // For now, we just return success
 
     return NextResponse.json({ success: true });
   } catch (error) {
