@@ -4,8 +4,8 @@ import { sanitizeInput } from '@/src/lib/sanitize';
 import { apiRateLimiter, getClientIP } from '@/src/lib/rate-limiter';
 
 // Helper to get user ID from request
-function getUserId(request: Request): string {
-  return request.headers.get('X-User-Id') || request.headers.get('X-License-Key') || 'anonymous';
+function getUserId(request: Request): string | null {
+  return request.headers.get('X-User-Id');
 }
 
 // Generic error message helper
@@ -31,6 +31,10 @@ export async function DELETE(
 
     const { id } = await params;
     const userId = getUserId(request);
+    
+    if (!userId) {
+      return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
+    }
     
     const success = await deleteWebsite(id, userId);
 
@@ -69,6 +73,10 @@ export async function GET(
 
     const { id } = await params;
     const userId = getUserId(request);
+    
+    if (!userId) {
+      return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
+    }
     
     const websites = await getAllWebsites(userId);
     const website = websites.find(w => w.id === id);
