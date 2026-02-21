@@ -1,6 +1,7 @@
 import { Website, MonitorLog } from './types';
-import { updateWebsite, addMonitorLog, getAllWebsites as getLicensedWebsites } from './db';
+import { updateWebsite, addMonitorLog, getAllWebsites as getLicensedWebsites, getUserById } from './db';
 import { sendAlertEmail } from './email';
+import { sendSiteDownWebhook, sendSiteUpWebhook, checkAndSendSSLWarnings, handleStatusChange } from './webhooks';
 
 interface CheckResult {
   status: 'up' | 'down';
@@ -81,6 +82,9 @@ export async function checkWebsite(website: Website): Promise<CheckResult> {
       checkedAt: new Date().toISOString(),
     });
 
+    // Get user ID for webhook notifications (use license key as user ID for simplicity)
+    const userId = licenseKey || website.userId || 'default';
+
     // Send alerts on status change
     if (previousStatus === 'up' && result.status === 'down') {
       // Site went down
@@ -89,6 +93,8 @@ export async function checkWebsite(website: Website): Promise<CheckResult> {
         'down',
         `Your website ${website.name} (${website.url}) is now DOWN. Error: ${result.error}`
       );
+      // Send webhook notification
+      await sendSiteDownWebhook(userId, website, result.error || 'Site is unreachable', result.responseTime);
     } else if (previousStatus === 'down' && result.status === 'up') {
       // Site recovered
       await sendAlertEmail(
@@ -96,7 +102,12 @@ export async function checkWebsite(website: Website): Promise<CheckResult> {
         'up',
         `Your website ${website.name} (${website.url}) is back UP! Response time: ${result.responseTime}ms`
       );
+      // Send webhook notification
+      await sendSiteUpWebhook(userId, website, result.responseTime);
     }
+
+    // Handle status change tracking for webhooks
+    await handleStatusChange(userId, website, result.status, result.error || undefined, result.responseTime);
 
     // SSL warning (if less than 14 days remaining)
     if (result.sslDaysRemaining !== null && result.sslDaysRemaining < 14) {
@@ -106,6 +117,9 @@ export async function checkWebsite(website: Website): Promise<CheckResult> {
         `SSL certificate for ${website.name} expires in ${result.sslDaysRemaining} days.`
       );
     }
+
+    // Check and send SSL expiry warnings via webhook
+    await checkAndSendSSLWarnings(userId, website);
 
     return result;
   } catch (error) {
@@ -133,6 +147,11 @@ export async function checkWebsite(website: Website): Promise<CheckResult> {
         'down',
         `Your website ${website.name} (${website.url}) is now DOWN. Error: ${errorMessage}`
       );
+      
+      // Send webhook notification
+      const userId = licenseKey || website.userId || 'default';
+      await sendSiteDownWebhook(userId, website, errorMessage, null);
+      await handleStatusChange(userId, website, 'down', errorMessage, null);
     }
 
     return {

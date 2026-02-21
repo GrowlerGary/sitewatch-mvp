@@ -14,7 +14,15 @@ import {
   Shield,
   CreditCard,
   Trash2,
-  AlertTriangle
+  AlertTriangle,
+  Key,
+  Webhook,
+  Copy,
+  Eye,
+  EyeOff,
+  RefreshCw,
+  Code,
+  ExternalLink
 } from 'lucide-react';
 import TierBadge from '@/src/components/TierBadge';
 import { TierKey, TIERS } from '@/src/lib/tiers';
@@ -28,6 +36,21 @@ interface UserData {
   createdAt: string;
 }
 
+interface ApiKeyInfo {
+  hasApiKey: boolean;
+  tier: TierKey;
+  hasApiAccess: boolean;
+  hasWebhookAccess: boolean;
+  webhook?: {
+    url: string | null;
+    configured: boolean;
+  };
+  limits: {
+    rateLimit: number;
+    sites: number;
+  };
+}
+
 export default function SettingsPage() {
   const router = useRouter();
   const [userId, setUserId] = useState<string | null>(null);
@@ -38,6 +61,18 @@ export default function SettingsPage() {
   const [isCheckingOut, setIsCheckingOut] = useState(false);
   const [message, setMessage] = useState('');
   const [siteCount, setSiteCount] = useState(0);
+  
+  // API Key state
+  const [apiKeyInfo, setApiKeyInfo] = useState<ApiKeyInfo | null>(null);
+  const [generatedApiKey, setGeneratedApiKey] = useState<string | null>(null);
+  const [showApiKey, setShowApiKey] = useState(false);
+  const [isGeneratingKey, setIsGeneratingKey] = useState(false);
+  const [isRevokingKey, setIsRevokingKey] = useState(false);
+  
+  // Webhook state
+  const [webhookUrl, setWebhookUrl] = useState('');
+  const [webhookSecret, setWebhookSecret] = useState<string | null>(null);
+  const [isSavingWebhook, setIsSavingWebhook] = useState(false);
 
   useEffect(() => {
     const savedUserId = localStorage.getItem('sitewatch_user_id');
@@ -49,6 +84,7 @@ export default function SettingsPage() {
     setUserId(savedUserId);
     fetchUser(savedUserId);
     fetchSiteCount(savedUserId);
+    fetchApiKeyInfo(savedUserId);
   }, [router]);
 
   async function fetchUser(uid: string) {
@@ -78,6 +114,115 @@ export default function SettingsPage() {
     } catch (error) {
       console.error('Failed to fetch site count:', error);
     }
+  }
+
+  async function fetchApiKeyInfo(uid: string) {
+    try {
+      const response = await fetch('/api/api-keys', {
+        headers: { 'X-User-Id': uid }
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        setApiKeyInfo(data);
+        if (data.webhook?.url) {
+          setWebhookUrl(data.webhook.url);
+        }
+      }
+    } catch (error) {
+      console.error('Failed to fetch API key info:', error);
+    }
+  }
+
+  async function generateApiKey() {
+    if (!userId) return;
+    
+    setIsGeneratingKey(true);
+    try {
+      const response = await fetch('/api/api-keys', {
+        method: 'POST',
+        headers: { 'X-User-Id': userId }
+      });
+      
+      const data = await response.json();
+      
+      if (response.ok) {
+        setGeneratedApiKey(data.apiKey);
+        setApiKeyInfo(prev => prev ? { ...prev, hasApiKey: true } : null);
+        setMessage('API key generated successfully! Copy it now - it won\'t be shown again.');
+      } else {
+        setMessage(data.error || 'Failed to generate API key');
+      }
+    } catch (error) {
+      setMessage('Failed to generate API key');
+    } finally {
+      setIsGeneratingKey(false);
+    }
+  }
+
+  async function revokeApiKey() {
+    if (!userId) return;
+    if (!confirm('Are you sure? This will invalidate your current API key immediately.')) return;
+    
+    setIsRevokingKey(true);
+    try {
+      const response = await fetch('/api/api-keys', {
+        method: 'DELETE',
+        headers: { 'X-User-Id': userId }
+      });
+      
+      if (response.ok) {
+        setGeneratedApiKey(null);
+        setApiKeyInfo(prev => prev ? { ...prev, hasApiKey: false } : null);
+        setMessage('API key revoked successfully');
+      } else {
+        const data = await response.json();
+        setMessage(data.error || 'Failed to revoke API key');
+      }
+    } catch (error) {
+      setMessage('Failed to revoke API key');
+    } finally {
+      setIsRevokingKey(false);
+    }
+  }
+
+  async function saveWebhookConfig() {
+    if (!userId) return;
+    
+    setIsSavingWebhook(true);
+    try {
+      const response = await fetch('/api/api-keys', {
+        method: 'PATCH',
+        headers: { 
+          'X-User-Id': userId,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ webhookUrl })
+      });
+      
+      const data = await response.json();
+      
+      if (response.ok) {
+        setWebhookSecret(data.webhookSecret);
+        setApiKeyInfo(prev => prev ? { 
+          ...prev, 
+          webhook: { url: webhookUrl, configured: true } 
+        } : null);
+        setMessage('Webhook configured successfully!');
+      } else {
+        setMessage(data.error || 'Failed to configure webhook');
+      }
+    } catch (error) {
+      setMessage('Failed to configure webhook');
+    } finally {
+      setIsSavingWebhook(false);
+    }
+  }
+
+  function copyToClipboard(text: string) {
+    navigator.clipboard.writeText(text);
+    setMessage('Copied to clipboard!');
+    setTimeout(() => setMessage(''), 2000);
   }
 
   function handleLogout() {
@@ -305,6 +450,255 @@ export default function SettingsPage() {
               >
                 Upgrade Plan
               </button>
+            )}
+          </div>
+
+          {/* API Access (Pro+ only) */}
+          <div className="bg-white rounded-xl shadow-sm border p-6 mb-6">
+            <div className="flex items-center gap-3 mb-6">
+              <div className="w-10 h-10 bg-indigo-100 rounded-lg flex items-center justify-center">
+                <Key className="w-5 h-5 text-indigo-600" />
+              </div>
+              <div>
+                <h2 className="text-lg font-semibold text-gray-900">API Access</h2>
+                <p className="text-sm text-gray-500">Programmatic access to your data</p>
+              </div>
+              {apiKeyInfo?.hasApiAccess && (
+                <span className="ml-auto px-2 py-1 bg-green-100 text-green-700 text-xs font-medium rounded-full">
+                  Active
+                </span>
+              )}
+            </div>
+
+            {!apiKeyInfo?.hasApiAccess ? (
+              <div className="p-4 bg-gray-50 rounded-lg">
+                <p className="text-sm text-gray-600 mb-3">
+                  API access is available on Pro and Business plans. Generate API keys to access your monitoring data programmatically.
+                </p>
+                <div className="flex items-center gap-2 text-sm text-gray-500">
+                  <Code className="w-4 h-4" />
+                  <span>100 requests/hour • REST API • JSON responses</span>
+                </div>
+                {tier !== 'free' && tier !== 'starter' && (
+                  <button
+                    onClick={() => setShowUpgradeModal(true)}
+                    className="mt-3 text-sm text-blue-600 hover:text-blue-700 font-medium"
+                  >
+                    Upgrade to Pro →
+                  </button>
+                )}
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {/* API Key Display */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">API Key</label>
+                  
+                  {generatedApiKey ? (
+                    <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
+                      <p className="text-sm text-yellow-800 mb-2 font-medium">
+                        ⚠️ Copy this key now! It won't be shown again.
+                      </p>
+                      <div className="flex items-center gap-2">
+                        <code className="flex-1 px-3 py-2 bg-white border rounded font-mono text-sm break-all">
+                          {showApiKey ? generatedApiKey : '•'.repeat(generatedApiKey.length)}
+                        </code>
+                        <button
+                          onClick={() => setShowApiKey(!showApiKey)}
+                          className="p-2 text-gray-500 hover:text-gray-700"
+                          title={showApiKey ? 'Hide' : 'Show'}
+                        >
+                          {showApiKey ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+                        </button>
+                        <button
+                          onClick={() => copyToClipboard(generatedApiKey)}
+                          className="p-2 text-blue-600 hover:text-blue-700"
+                          title="Copy"
+                        >
+                          <Copy className="w-5 h-5" />
+                        </button>
+                      </div>
+                    </div>
+                  ) : apiKeyInfo?.hasApiKey ? (
+                    <div className="flex items-center justify-between p-3 bg-green-50 border border-green-200 rounded-lg">
+                      <div className="flex items-center gap-2">
+                        <div className="w-2 h-2 bg-green-500 rounded-full" />
+                        <span className="text-sm text-green-800">API key is active</span>
+                      </div>
+                      <button
+                        onClick={revokeApiKey}
+                        disabled={isRevokingKey}
+                        className="text-sm text-red-600 hover:text-red-700 font-medium disabled:opacity-50"
+                      >
+                        {isRevokingKey ? 'Revoking...' : 'Revoke'}
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={generateApiKey}
+                      disabled={isGeneratingKey}
+                      className="w-full py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 font-medium disabled:opacity-50"
+                    >
+                      {isGeneratingKey ? 'Generating...' : 'Generate API Key'}
+                    </button>
+                  )}
+                </div>
+
+                {/* API Documentation */}
+                <div className="p-4 bg-gray-50 rounded-lg">
+                  <h3 className="text-sm font-medium text-gray-900 mb-2">Available Endpoints</h3>
+                  <div className="space-y-2 text-sm font-mono">
+                    <div className="flex items-center gap-2">
+                      <span className="px-2 py-1 bg-green-100 text-green-700 text-xs rounded">GET</span>
+                      <span className="text-gray-600">/api/v1/sites</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="px-2 py-1 bg-green-100 text-green-700 text-xs rounded">GET</span>
+                      <span className="text-gray-600">/api/v1/sites/{'{id}'}</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="px-2 py-1 bg-green-100 text-green-700 text-xs rounded">GET</span>
+                      <span className="text-gray-600">/api/v1/sites/{'{id}'}/status</span>
+                    </div>
+                  </div>
+                  <p className="mt-2 text-xs text-gray-500">
+                    Rate limit: {apiKeyInfo?.limits.rateLimit} requests/hour
+                  </p>
+                </div>
+
+                {/* Regenerate option */}
+                {apiKeyInfo?.hasApiKey && !generatedApiKey && (
+                  <button
+                    onClick={generateApiKey}
+                    disabled={isGeneratingKey}
+                    className="w-full py-2 border border-indigo-600 text-indigo-600 rounded-lg hover:bg-indigo-50 font-medium disabled:opacity-50 flex items-center justify-center gap-2"
+                  >
+                    <RefreshCw className="w-4 h-4" />
+                    {isGeneratingKey ? 'Generating...' : 'Generate New Key'}
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Webhooks (Business only) */}
+          <div className="bg-white rounded-xl shadow-sm border p-6 mb-6">
+            <div className="flex items-center gap-3 mb-6">
+              <div className="w-10 h-10 bg-pink-100 rounded-lg flex items-center justify-center">
+                <Webhook className="w-5 h-5 text-pink-600" />
+              </div>
+              <div>
+                <h2 className="text-lg font-semibold text-gray-900">Outgoing Webhooks</h2>
+                <p className="text-sm text-gray-500">Real-time event notifications</p>
+              </div>
+              {apiKeyInfo?.hasWebhookAccess && apiKeyInfo?.webhook?.configured && (
+                <span className="ml-auto px-2 py-1 bg-green-100 text-green-700 text-xs font-medium rounded-full">
+                  Configured
+                </span>
+              )}
+            </div>
+
+            {!apiKeyInfo?.hasWebhookAccess ? (
+              <div className="p-4 bg-gray-50 rounded-lg">
+                <p className="text-sm text-gray-600 mb-3">
+                  Webhooks are available on the Business plan. Receive real-time notifications when sites go down, come back up, or when SSL certificates are expiring.
+                </p>
+                <div className="space-y-1 text-sm text-gray-500">
+                  <div className="flex items-center gap-2">
+                    <div className="w-1.5 h-1.5 bg-gray-400 rounded-full" />
+                    <span>site.down - When a site goes down</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="w-1.5 h-1.5 bg-gray-400 rounded-full" />
+                    <span>site.up - When a site comes back up</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="w-1.5 h-1.5 bg-gray-400 rounded-full" />
+                    <span>ssl.expiring_soon - SSL expires in 30/14/7 days</span>
+                  </div>
+                </div>
+                {tier !== 'business' && (
+                  <button
+                    onClick={() => setShowUpgradeModal(true)}
+                    className="mt-3 text-sm text-blue-600 hover:text-blue-700 font-medium"
+                  >
+                    Upgrade to Business →
+                  </button>
+                )}
+              </div>
+            ) : (
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Webhook URL
+                  </label>
+                  <input
+                    type="url"
+                    value={webhookUrl}
+                    onChange={(e) => setWebhookUrl(e.target.value)}
+                    placeholder="https://your-app.com/webhooks/sitewatch"
+                    className="w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-pink-500 focus:border-transparent"
+                  />
+                  <p className="mt-1 text-xs text-gray-500">
+                    We'll send POST requests to this URL when events occur
+                  </p>
+                </div>
+
+                {webhookSecret && (
+                  <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
+                    <label className="block text-sm font-medium text-yellow-800 mb-2">
+                      Webhook Secret
+                    </label>
+                    <p className="text-xs text-yellow-700 mb-2">
+                      Use this to verify webhook signatures (X-Webhook-Signature header)
+                    </p>
+                    <div className="flex items-center gap-2">
+                      <code className="flex-1 px-3 py-2 bg-white border rounded font-mono text-sm break-all">
+                        {webhookSecret}
+                      </code>
+                      <button
+                        onClick={() => copyToClipboard(webhookSecret)}
+                        className="p-2 text-yellow-700 hover:text-yellow-800"
+                      >
+                        <Copy className="w-5 h-5" />
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                <button
+                  onClick={saveWebhookConfig}
+                  disabled={isSavingWebhook || !webhookUrl}
+                  className="w-full py-2 bg-pink-600 text-white rounded-lg hover:bg-pink-700 font-medium disabled:opacity-50"
+                >
+                  {isSavingWebhook ? 'Saving...' : apiKeyInfo?.webhook?.configured ? 'Update Webhook' : 'Save Webhook'}
+                </button>
+
+                <div className="p-4 bg-gray-50 rounded-lg">
+                  <h3 className="text-sm font-medium text-gray-900 mb-2">Webhook Payload Example</h3>
+                  <pre className="text-xs text-gray-600 overflow-x-auto bg-white p-3 rounded border">
+{`{
+  "event": "site.down",
+  "timestamp": "2025-01-20T10:30:00Z",
+  "site": {
+    "id": "abc123",
+    "name": "My Site",
+    "url": "https://example.com",
+    "status": "down"
+  },
+  "data": {
+    "previousStatus": "up",
+    "error": "Connection timeout",
+    "responseTime": null
+  }
+}`}
+                  </pre>
+                  <div className="mt-2 flex items-center gap-1 text-xs text-gray-500">
+                    <Shield className="w-3 h-3" />
+                    <span>Signed with HMAC-SHA256 for security</span>
+                  </div>
+                </div>
+              </div>
             )}
           </div>
 
