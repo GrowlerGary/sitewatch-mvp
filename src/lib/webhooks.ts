@@ -13,12 +13,12 @@ export type { WebhookEventType } from '@/src/lib/api-auth';
 interface SiteDownPayload {
   previousStatus: string;
   error: string;
-  responseTime: number | null;
+  responseTime: number | null | undefined;
 }
 
 interface SiteUpPayload {
   previousStatus: string;
-  responseTime: number | null;
+  responseTime: number | null | undefined;
   downtimeDuration?: number; // in seconds
 }
 

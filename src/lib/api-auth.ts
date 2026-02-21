@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { createHash, createHmac, timingSafeEqual } from 'crypto';
-import { getUserById, updateUser, getAllWebsites, getWebsiteById, getUserTier } from '@/src/lib/db';
+import { getUserById } from '@/src/lib/db';
 import { TierKey, TIERS } from '@/src/lib/tiers';
 import { RateLimiterMemory } from 'rate-limiter-flexible';
 
@@ -66,6 +66,16 @@ export interface AuthenticatedRequest extends NextRequest {
   };
 }
 
+// In-memory API key store (userId -> { apiKeyHash, plan, etc })
+const apiKeyStore = new Map<string, {
+  id: string;
+  email: string;
+  plan: TierKey;
+  apiKeyHash: string;
+  webhookUrl?: string;
+  webhookSecret?: string;
+}>();
+
 // Extract API key from X-API-Key header
 export function extractApiKey(request: Request): string | null {
   return request.headers.get('X-API-Key');
@@ -75,20 +85,16 @@ export function extractApiKey(request: Request): string | null {
 export async function validateApiKey(
   apiKey: string
 ): Promise<{ valid: boolean; userId?: string; tier?: TierKey; error?: string }> {
-  // Hash the provided key
-  const keyHash = hashApiKey(apiKey);
-  
   // Check if it's in the correct format
   if (!apiKey.startsWith('sw_live_')) {
     return { valid: false, error: 'Invalid API key format' };
   }
   
-  // Find user by API key hash (we'll search through users)
-  // In a real implementation, we'd query by api_key_hash column
-  // For now, we'll iterate through users (acceptable for MVP)
-  const users = await getAllApiUsers();
+  // Hash the provided key
+  const keyHash = hashApiKey(apiKey);
   
-  for (const user of users) {
+  // Look up the key in our in-memory store
+  for (const user of apiKeyStore.values()) {
     if (user.apiKeyHash === keyHash) {
       // Check if tier allows API access (Pro+ only)
       if (user.plan === 'free' || user.plan === 'starter') {
@@ -108,27 +114,6 @@ export async function validateApiKey(
   
   return { valid: false, error: 'Invalid API key' };
 }
-
-// Helper to get all users with API keys (for in-memory fallback)
-async function getAllApiUsers() {
-  // This is a simplified approach for the MVP
-  // In production, you'd query Supabase directly with a proper index
-  const { getAllWebsites: getAll } = await import('@/src/lib/db');
-  
-  // Since we can't easily query all users, we'll use a different approach
-  // Store API keys in a separate in-memory map for now
-  return Array.from(apiKeyStore.values());
-}
-
-// In-memory API key store (userId -> { apiKeyHash, plan, etc })
-const apiKeyStore = new Map<string, {
-  id: string;
-  email: string;
-  plan: TierKey;
-  apiKeyHash: string;
-  webhookUrl?: string;
-  webhookSecret?: string;
-}>();
 
 // Store API key for a user
 export async function storeApiKey(
@@ -150,8 +135,8 @@ export async function storeApiKey(
 export async function getUserApiInfo(userId: string): Promise<{
   hasApiKey: boolean;
   apiKeyHash?: string;
-  webhookUrl?: string;
-  webhookSecret?: string;
+  webhookUrl?: string | null;
+  webhookSecret?: string | null;
 } | null> {
   const user = apiKeyStore.get(userId);
   if (!user) return null;
@@ -159,8 +144,8 @@ export async function getUserApiInfo(userId: string): Promise<{
   return {
     hasApiKey: !!user.apiKeyHash,
     apiKeyHash: user.apiKeyHash,
-    webhookUrl: user.webhookUrl,
-    webhookSecret: user.webhookSecret,
+    webhookUrl: user.webhookUrl || null,
+    webhookSecret: user.webhookSecret || null,
   };
 }
 
@@ -201,10 +186,10 @@ export async function storeWebhookConfig(
 }
 
 // Get webhook configuration for a user
-export function getWebhookConfig(userId: string): {
+export async function getWebhookConfig(userId: string): Promise<{
   url?: string;
   secret?: string;
-} | null {
+} | null> {
   const user = apiKeyStore.get(userId);
   if (!user || !user.webhookUrl) return null;
   
@@ -215,9 +200,9 @@ export function getWebhookConfig(userId: string): {
 }
 
 // Middleware to validate API key and check tier
-export async function withApiAuth(
+export function withApiAuth(
   handler: (req: AuthenticatedRequest) => Promise<NextResponse>
-): Promise<(req: NextRequest) => Promise<NextResponse>> {
+): (req: NextRequest) => Promise<NextResponse> {
   return async (request: NextRequest) => {
     const apiKey = extractApiKey(request);
     
@@ -339,7 +324,7 @@ export interface WebhookPayload {
     previousStatus?: string;
     sslDaysRemaining?: number;
     error?: string;
-    responseTime?: number;
+    responseTime?: number | null;
   };
 }
 
@@ -355,7 +340,7 @@ export async function sendWebhookEvent(
   },
   data: WebhookPayload['data']
 ): Promise<{ success: boolean; error?: string }> {
-  const config = getWebhookConfig(userId);
+  const config = await getWebhookConfig(userId);
   if (!config?.url || !config?.secret) {
     return { success: false, error: 'No webhook configured' };
   }
