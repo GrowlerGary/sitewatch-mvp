@@ -16,11 +16,9 @@
 
 ### Database (Supabase)
 - [ ] `SUPABASE_URL` - Your Supabase project URL
-- [ ] `SUPABASE_ANON_KEY` - Supabase anonymous key
-- [ ] `SUPABASE_SERVICE_ROLE_KEY` - Supabase service role key (for server-side)
+- [ ] `SUPABASE_SERVICE_KEY` - Supabase service role key (for server-side)
 
 ### Payments (Stripe)
-- [ ] `STRIPE_PUBLISHABLE_KEY` - pk_live_... (or pk_test_... for testing)
 - [ ] `STRIPE_SECRET_KEY` - sk_live_... (or sk_test_... for testing)
 - [ ] `STRIPE_WEBHOOK_SECRET` - From Stripe CLI or dashboard
 - [ ] `STRIPE_STARTER_PRICE_ID` - price_... for Starter tier ($5/mo)
@@ -38,9 +36,6 @@
 
 ### Cron-Job.org
 - [ ] `CRON_SECRET` - Random string for authenticating cron requests
-
-### App Config
-- [ ] `NEXT_PUBLIC_APP_URL` - https://sitewatch.garybuilds.xyz (production URL)
 
 ---
 
@@ -77,7 +72,6 @@
 
 ### 2. Get API Keys
 - [ ] Developer → API Keys
-- [ ] Copy Publishable key (pk_live_...)
 - [ ] Copy Secret key (sk_live_...)
 
 ### 3. Webhook Setup
